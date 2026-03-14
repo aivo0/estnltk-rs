@@ -8,6 +8,7 @@ name = "estnltk_regex_rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+aho-corasick = "1"
 resharp = "0.3"
 pyo3 = { version = "0.22", features = ["extension-module"] }
 serde = { version = "1", features = ["derive"] }

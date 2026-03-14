@@ -11,13 +11,13 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | Tagger | EstNLTK | estnltk-rs | Coverage |
 |--------|---------|------------|----------|
 | RegexTagger | `regex` library, supports capture groups, overlapping | `resharp` DFA engine, group=0 only | **Partial** |
-| SubstringTagger | Aho-Corasick automaton for multi-string matching | — | **None** |
+| SubstringTagger | Aho-Corasick automaton for multi-string matching | `aho-corasick` automaton, token separators, static rules | **Partial** |
 | SpanTagger | Matches input layer attribute values against ruleset | — | **None** |
 | PhraseTagger | Matches sequential attribute values (phrase tuples), enveloping layer | — | **None** |
 
 **Notes:**
 - RegexTagger is the only tagger ported. The other three operate on existing layers rather than raw text, so they have different input requirements.
-- SubstringTagger uses `ahocorasick` for efficient multi-pattern string matching — a different algorithm class entirely.
+- SubstringTagger is ported with static rules, token separators, and all conflict strategies. Decorators and expander are not ported (Python-specific).
 - SpanTagger and PhraseTagger depend on EstNLTK's layer/text infrastructure (`input_layer`, `input_attribute`), which has no Rust equivalent.
 
 ---
@@ -258,7 +258,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (10 unit tests) |
 | Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (8 unit tests) |
-| Cross-implementation parity | — | `cross_tests/test_cross_impl.py` (23 tests) |
+| Cross-implementation parity | — | `cross_tests/test_cross_impl.py` (23 tests), `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
 | CSV vocabulary loading | `regex_vocabulary.csv` test fixture | — |
 | Decorator chain tests | Various in existing test suite | — |
@@ -273,7 +273,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 
 | Category | Full | Partial | None |
 |----------|------|---------|------|
-| Tagger types (4) | 0 | 1 | 3 |
+| Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 6 | 2 | 3 |
 | Extraction rules (6 features) | 2 | 2 | 2 |
 | Rulesets (7 features) | 0 | 2 | 5 |
