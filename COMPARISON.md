@@ -82,8 +82,8 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 |---------|---------|------------|----------|
 | `Ruleset` (unique patterns) | Enforces no duplicate patterns per rule type | No validation — duplicate patterns allowed | **None** |
 | `AmbiguousRuleset` (multi-pattern) | Allows multiple rules per pattern | Default behavior — all rules applied | **Partial** |
-| CSV loading (`ruleset.load()`) | Reads rules from CSV with typed columns (int, float, regex, string, callable, expression) | — | **None** |
-| `CONVERSION_MAP` type coercions | `int`, `float`, `regex`, `string`, `callable`, `expression` | — | **None** |
+| CSV loading (`ruleset.load()`) | Reads rules from CSV with typed columns (int, float, regex, string, callable, expression) | `rs_load_rules_csv` function with typed columns (int, float, string, bool) | **Partial** |
+| `CONVERSION_MAP` type coercions | `int`, `float`, `regex`, `string`, `callable`, `expression` | `int`, `float`, `string`, `bool` | **Partial** |
 | `rule_map` property | Maps patterns to grouped rules | — | **None** |
 | `output_attributes` property | Computes attribute union from all rules | Auto-collected in `rs_regex_tag` convenience function | **Partial** |
 | `missing_attributes` validation | Checks if rules have inconsistent attribute sets | — | **None** |
@@ -276,13 +276,13 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
-| Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (10 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (8 unit tests) |
+| Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (10 unit tests) |
 | Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (13 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
-| CSV vocabulary loading | `regex_vocabulary.csv` test fixture | — |
+| CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `tests/test_csv_loader.rs` (5 tests) + `src/csv_loader.rs` (10 unit tests) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
 | SpanTagger tests | Separate test file | — |
@@ -296,17 +296,17 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 6 | 2 | 3 |
-| SubstringTagger parameters (12) | 7 | 2 | 3 |
-| Extraction rules (6 features) | 2 | 2 | 2 |
-| Rulesets (7 features) | 0 | 2 | 5 |
+| SubstringTagger parameters (12) | 8 | 2 | 2 |
+| Extraction rules (6 features) | 2 | 3 | 1 |
+| Rulesets (7 features) | 0 | 4 | 3 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
-| Helper functions (5) | 3 | 0 | 1 (+1 N/A) |
+| Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
 | Regex library classes (4) | 0 | 0 | 4 |
-| Data model (12 concepts) | 1 | 5 | 6 |
+| Data model (13 concepts) | 1 | 6 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text.
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 82 Rust tests total (51 unit + 31 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset validation and CSV loading, regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset validation, regex library composition tools, morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).

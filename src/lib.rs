@@ -1,5 +1,6 @@
 pub mod byte_char;
 pub mod conflict;
+pub mod csv_loader;
 pub mod substring_tagger;
 pub mod tagger;
 pub mod types;
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use csv_loader::{ColumnRef, CsvLoadConfig, CsvRule};
 use substring_tagger::{make_substring_rule, SubstringTagger};
 use tagger::{make_rule, RegexTagger};
 use types::*;
@@ -335,6 +337,75 @@ fn rs_substring_tag(
     Ok(list.unbind().into())
 }
 
+/// Helper: resolve a Python column reference (str or int) to ColumnRef.
+fn py_to_column_ref(obj: &Bound<'_, PyAny>) -> PyResult<ColumnRef> {
+    if let Ok(i) = obj.extract::<usize>() {
+        Ok(ColumnRef::Index(i))
+    } else if let Ok(s) = obj.extract::<String>() {
+        Ok(ColumnRef::Name(s))
+    } else {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "Column reference must be a str (column name) or int (column index)",
+        ))
+    }
+}
+
+/// Helper: convert CsvRules to Python list of dicts (same format as pattern dicts).
+fn csv_rules_to_pylist(py: Python<'_>, rules: &[CsvRule]) -> PyResult<PyObject> {
+    let list = PyList::empty_bound(py);
+    for rule in rules {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("pattern", &rule.pattern)?;
+        dict.set_item("group", rule.group)?;
+        dict.set_item("priority", rule.priority)?;
+        let attrs = PyDict::new_bound(py);
+        for (k, v) in &rule.attributes {
+            attrs.set_item(k, v.to_pyobject(py))?;
+        }
+        dict.set_item("attributes", attrs)?;
+        list.append(dict)?;
+    }
+    Ok(list.unbind().into())
+}
+
+/// Load extraction rules from a CSV file.
+///
+/// CSV format:
+/// - Row 1: column names
+/// - Row 2: column types (string, int, float, bool)
+/// - Row 3+: data rows
+///
+/// Returns a list of pattern dicts suitable for passing to RsRegexTagger or RsSubstringTagger.
+#[pyfunction]
+#[pyo3(signature = (file_path, key_column=None, group_column=None, priority_column=None))]
+fn rs_load_rules_csv(
+    py: Python<'_>,
+    file_path: &str,
+    key_column: Option<&Bound<'_, PyAny>>,
+    group_column: Option<&Bound<'_, PyAny>>,
+    priority_column: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyObject> {
+    let config = CsvLoadConfig {
+        key_column: match key_column {
+            Some(obj) => py_to_column_ref(obj)?,
+            None => ColumnRef::Index(0),
+        },
+        group_column: match group_column {
+            Some(obj) => Some(py_to_column_ref(obj)?),
+            None => None,
+        },
+        priority_column: match priority_column {
+            Some(obj) => Some(py_to_column_ref(obj)?),
+            None => None,
+        },
+    };
+
+    let rules = csv_loader::load_rules_from_csv(file_path, &config)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    csv_rules_to_pylist(py, &rules)
+}
+
 /// Python module definition.
 #[pymodule]
 fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -342,5 +413,6 @@ fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PySubstringTagger>()?;
     m.add_function(wrap_pyfunction!(rs_regex_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_substring_tag, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_load_rules_csv, m)?)?;
     Ok(())
 }
