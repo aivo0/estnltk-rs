@@ -16,13 +16,32 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | PhraseTagger | Matches sequential attribute values (phrase tuples), enveloping layer | — | **None** |
 
 **Notes:**
-- RegexTagger is the only tagger ported. The other three operate on existing layers rather than raw text, so they have different input requirements.
+- RegexTagger and SubstringTagger are ported. The other two operate on existing layers rather than raw text, so they have different input requirements.
 - SubstringTagger is ported with static rules, token separators, and all conflict strategies. Decorators and expander are not ported (Python-specific).
 - SpanTagger and PhraseTagger depend on EstNLTK's layer/text infrastructure (`input_layer`, `input_attribute`), which has no Rust equivalent.
 
 ---
 
-## 2. RegexTagger — Parameter-by-Parameter Comparison
+## 2. SubstringTagger — Parameter-by-Parameter Comparison
+
+| Parameter | EstNLTK | estnltk-rs | Coverage | Notes |
+|-----------|---------|------------|----------|-------|
+| `ruleset` / `patterns` | `AmbiguousRuleset` with `StaticExtractionRule` list | List of pattern dicts | **Full** | Different input format, same information carried |
+| `output_layer` | str, default `'terms'` | str, default `"substrings"` | **Full** | Different defaults |
+| `output_attributes` | Sequence, default `None` | `Vec<String>`, default auto-collected | **Full** | |
+| `conflict_resolver` | str or callable | str only | **Partial** | Custom callable resolvers not supported |
+| `ignore_case` / `lowercase_text` | `ignore_case`, bool, default `False` | `lowercase_text`, bool, default `false` | **Full** | Different name, same behavior |
+| `token_separators` | str, default `''` | str, default `""` | **Full** | |
+| `ambiguous_output_layer` | bool, default `True` | Always `true` | **Partial** | Rust always produces ambiguous output |
+| `global_decorator` | `Callable[[Text, ElementaryBaseSpan, Dict], Optional[Dict]]` | — | **None** | Python callables can't run in Rust |
+| `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `expander` | `Callable[[str], List[str]]`, default `None` | — | **None** | Morphological expansion (e.g., `noun_forms_expander`) requires Vabamorf |
+
+---
+
+## 3. RegexTagger — Parameter-by-Parameter Comparison
 
 | Parameter | EstNLTK | estnltk-rs | Coverage | Notes |
 |-----------|---------|------------|----------|-------|
@@ -40,7 +59,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 3. Extraction Rules
+## 4. Extraction Rules
 
 | Feature | EstNLTK | estnltk-rs | Coverage |
 |---------|---------|------------|----------|
@@ -57,7 +76,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 4. Rulesets
+## 5. Rulesets
 
 | Feature | EstNLTK | estnltk-rs | Coverage |
 |---------|---------|------------|----------|
@@ -71,7 +90,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 5. Conflict Resolution
+## 6. Conflict Resolution
 
 | Strategy | EstNLTK | estnltk-rs | Coverage |
 |----------|---------|------------|----------|
@@ -90,7 +109,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 6. Decorator / Annotation Pipeline
+## 7. Decorator / Annotation Pipeline
 
 | Stage | EstNLTK | estnltk-rs | Coverage |
 |-------|---------|------------|----------|
@@ -107,7 +126,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 7. Regex Engine Differences
+## 8. Regex Engine Differences
 
 | Feature | EstNLTK (`regex` library) | estnltk-rs (`resharp`) |
 |---------|--------------------------|------------------------|
@@ -129,7 +148,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 ---
 
-## 8. Regex Library (Pattern Composition)
+## 9. Regex Library (Pattern Composition)
 
 EstNLTK provides a `regex_library` subpackage for building regex patterns programmatically:
 
@@ -155,7 +174,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 
 ---
 
-## 9. Helper Methods
+## 10. Helper Methods
 
 | Function | EstNLTK | estnltk-rs | Coverage |
 |----------|---------|------------|----------|
@@ -168,11 +187,11 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 
 **Notes:**
 - Morphological expansion (`noun_forms_expander`) depends on Vabamorf, a C++ Estonian morphological analyzer with Python bindings. Not portable to Rust without FFI.
-- The expander is only used by `SubstringTagger`, which is not ported.
+- The expander is used by `SubstringTagger`. The Rust `SubstringTagger` does not support expanders — patterns must be pre-expanded before passing to Rust.
 
 ---
 
-## 10. Data Types and Layer Model
+## 11. Data Types and Layer Model
 
 | Concept | EstNLTK | estnltk-rs | Coverage |
 |---------|---------|------------|----------|
@@ -192,7 +211,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 
 ---
 
-## 11. Output Format
+## 12. Output Format
 
 EstNLTK's `layer_to_dict()` returns:
 
@@ -238,7 +257,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 
 ---
 
-## 12. Error Handling
+## 13. Error Handling
 
 | Scenario | EstNLTK | estnltk-rs |
 |----------|---------|------------|
@@ -249,23 +268,25 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Conflicting patterns in Ruleset | `ValueError` from `Ruleset.add_rules` | No validation (duplicates silently allowed) |
 | Missing `pattern` key in dict | N/A (uses `StaticExtractionRule` dataclass) | `PyKeyError` |
 | Unsupported attribute value type | No restriction (any Python object) | `PyTypeError` (only str/int/float/bool/None) |
+| Invalid Aho-Corasick patterns | N/A (ahocorasick library handles) | `PyValueError` at `RsSubstringTagger` construction |
 
 ---
 
-## 13. Testing
+## 14. Testing
 
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (10 unit tests) |
 | Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (8 unit tests) |
-| Cross-implementation parity | — | `cross_tests/test_cross_impl.py` (23 tests), `cross_tests/test_cross_substring.py` (14 tests) |
+| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (13 unit tests) |
+| Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
+| Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
 | CSV vocabulary loading | `regex_vocabulary.csv` test fixture | — |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
 | SpanTagger tests | Separate test file | — |
 | PhraseTagger tests | Separate test file | — |
-| SubstringTagger tests | Separate test file | — |
 
 ---
 
@@ -275,6 +296,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 6 | 2 | 3 |
+| SubstringTagger parameters (12) | 7 | 2 | 3 |
 | Extraction rules (6 features) | 2 | 2 | 2 |
 | Rulesets (7 features) | 0 | 2 | 5 |
 | Conflict strategies (7) | 6 | 0 | 1 |
@@ -283,8 +305,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Regex library classes (4) | 0 | 0 | 4 |
 | Data model (12 concepts) | 1 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Verified by 23 cross-implementation tests including Estonian multi-byte text.
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text.
 
-**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped matching, other tagger types (Substring/Span/Phrase), ruleset validation and CSV loading, regex library composition tools.
+**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset validation and CSV loading, regex library composition tools, morphological expanders.
 
-**By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
+**By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
