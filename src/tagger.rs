@@ -149,7 +149,10 @@ impl RegexTagger {
             // Merge into existing span or create new one.
             if let Some(last) = spans.last_mut() {
                 if last.span == match_span {
-                    last.annotations.push(annotation);
+                    // Non-ambiguous: keep only the first annotation per span.
+                    if self.config.ambiguous_output_layer {
+                        last.annotations.push(annotation);
+                    }
                     continue;
                 }
             }
@@ -162,7 +165,7 @@ impl RegexTagger {
         TagResult {
             name: self.config.output_layer.clone(),
             attributes: self.config.output_attributes.clone(),
-            ambiguous: true,
+            ambiguous: self.config.ambiguous_output_layer,
             spans,
         }
     }
@@ -208,6 +211,7 @@ mod tests {
             group_attribute: None,
             priority_attribute: None,
             pattern_attribute: None,
+            ambiguous_output_layer: true,
         }
     }
 
@@ -399,6 +403,56 @@ mod tests {
             result.spans[1].annotations[0].0.get("color"),
             Some(&AnnotationValue::Null)
         );
+    }
+
+    #[test]
+    fn test_ambiguous_output_layer_false() {
+        // Two rules match the same span — only first annotation kept.
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("greeting".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("word".to_string()));
+
+        let r1 = make_rule("hello", a1, 0, 0).unwrap();
+        let r2 = make_rule("hello", a2, 0, 0).unwrap();
+
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+        cfg.ambiguous_output_layer = false;
+
+        let tagger = RegexTagger::new(vec![r1, r2], cfg).unwrap();
+        let result = tagger.tag("hello");
+
+        assert!(!result.ambiguous);
+        assert_eq!(result.spans.len(), 1);
+        // Only the first annotation is kept.
+        assert_eq!(result.spans[0].annotations.len(), 1);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("type"),
+            Some(&AnnotationValue::Str("greeting".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_output_layer_true_default() {
+        // Two rules match the same span — both annotations kept.
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("greeting".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("word".to_string()));
+
+        let r1 = make_rule("hello", a1, 0, 0).unwrap();
+        let r2 = make_rule("hello", a2, 0, 0).unwrap();
+
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+
+        let tagger = RegexTagger::new(vec![r1, r2], cfg).unwrap();
+        let result = tagger.tag("hello");
+
+        assert!(result.ambiguous);
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].annotations.len(), 2);
     }
 
     #[test]

@@ -39,6 +39,7 @@ fn test_csv_to_regex_tagger_integration() {
         group_attribute: None,
         priority_attribute: None,
         pattern_attribute: None,
+        ambiguous_output_layer: true,
     };
 
     let tagger = RegexTagger::new(rules, config).unwrap();
@@ -93,6 +94,7 @@ fn test_csv_with_priority_resolution() {
         group_attribute: None,
         priority_attribute: None,
         pattern_attribute: None,
+        ambiguous_output_layer: true,
     };
 
     let tagger = RegexTagger::new(rules, tagger_config).unwrap();
@@ -125,6 +127,7 @@ fn test_csv_estonian_patterns() {
         group_attribute: None,
         priority_attribute: None,
         pattern_attribute: None,
+        ambiguous_output_layer: true,
     };
 
     let tagger = RegexTagger::new(rules, config).unwrap();

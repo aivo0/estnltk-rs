@@ -232,7 +232,10 @@ impl SubstringTagger {
                 // Merge into existing span or create new one.
                 if let Some(last) = spans.last_mut() {
                     if last.span == match_span {
-                        last.annotations.push(annotation);
+                        // Non-ambiguous: keep only the first annotation per span.
+                        if self.config.ambiguous_output_layer {
+                            last.annotations.push(annotation);
+                        }
                         continue;
                     }
                 }
@@ -246,7 +249,7 @@ impl SubstringTagger {
         TagResult {
             name: self.config.output_layer.clone(),
             attributes: self.config.output_attributes.clone(),
-            ambiguous: true,
+            ambiguous: self.config.ambiguous_output_layer,
             spans,
         }
     }
@@ -290,6 +293,7 @@ mod tests {
             group_attribute: None,
             priority_attribute: None,
             pattern_attribute: None,
+            ambiguous_output_layer: true,
         }
     }
 
@@ -555,6 +559,55 @@ mod tests {
             result.spans[1].annotations[0].0.get("score"),
             Some(&AnnotationValue::Null)
         );
+    }
+
+    #[test]
+    fn test_ambiguous_output_layer_false() {
+        // Two rules with same pattern — only first annotation kept.
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("capital".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
+
+        let rules = vec![
+            make_substring_rule("Washington", a1, 0, 0),
+            make_substring_rule("Washington", a2, 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+        cfg.ambiguous_output_layer = false;
+        let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
+        let result = tagger.tag("Washington");
+
+        assert!(!result.ambiguous);
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].annotations.len(), 1);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("type"),
+            Some(&AnnotationValue::Str("capital".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_output_layer_true_default() {
+        // Two rules with same pattern — both annotations kept (default behavior).
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("capital".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
+
+        let rules = vec![
+            make_substring_rule("Washington", a1, 0, 0),
+            make_substring_rule("Washington", a2, 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+        let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
+        let result = tagger.tag("Washington");
+
+        assert!(result.ambiguous);
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].annotations.len(), 2);
     }
 
     #[test]

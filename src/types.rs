@@ -185,6 +185,11 @@ pub struct TaggerConfig {
     pub group_attribute: Option<String>,
     pub priority_attribute: Option<String>,
     pub pattern_attribute: Option<String>,
+    /// When `true` (default), each span can have multiple annotations from
+    /// different rules.  When `false`, only the first annotation is kept and
+    /// the output layer is marked non-ambiguous — matching EstNLTK's
+    /// `ambiguous_output_layer` parameter.
+    pub ambiguous_output_layer: bool,
 }
 
 /// Check if rules have inconsistent attribute sets.

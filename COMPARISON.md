@@ -32,7 +32,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `conflict_resolver` | str or callable | str only | **Partial** | Custom callable resolvers not supported |
 | `ignore_case` / `lowercase_text` | `ignore_case`, bool, default `False` | `lowercase_text`, bool, default `false` | **Full** | Different name, same behavior |
 | `token_separators` | str, default `''` | str, default `""` | **Full** | |
-| `ambiguous_output_layer` | bool, default `True` | Always `true` | **Partial** | Rust always produces ambiguous output |
+| `ambiguous_output_layer` | bool, default `True` | bool, default `true` | **Full** | When `false`, only first annotation per span is kept |
 | `global_decorator` | `Callable[[Text, ElementaryBaseSpan, Dict], Optional[Dict]]` | — | **None** | Python callables can't run in Rust |
 | `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
@@ -201,7 +201,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 | `ElementaryBaseSpan` | `(start, end)` character offsets | `MatchSpan { start, end }` | **Full** |
 | `EnvelopingBaseSpan` | Tuple of `ElementaryBaseSpan` (for PhraseTagger) | — | **None** |
 | `Annotation` | Dict of attribute values, linked to span | `HashMap<String, AnnotationValue>` | **Partial** |
-| `ambiguous` flag | Per-layer, controls whether multiple annotations per span allowed | Always `true` | **Partial** |
+| `ambiguous` flag | Per-layer, controls whether multiple annotations per span allowed | Controlled by `ambiguous_output_layer` config (default `true`) | **Full** |
 | `parent` relationship | Layer can declare parent layer | — | **None** |
 | `enveloping` relationship | Layer can declare enveloping layer | — | **None** |
 | `secondary_attributes` | Additional layer attributes | — | **None** |
@@ -277,8 +277,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (10 unit tests) |
-| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (13 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (17 unit tests) |
+| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (18 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
@@ -296,16 +296,16 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 6 | 2 | 3 |
-| SubstringTagger parameters (12) | 8 | 2 | 2 |
+| SubstringTagger parameters (12) | 9 | 1 | 2 |
 | Extraction rules (6 features) | 2 | 3 | 1 |
 | Rulesets (7 features) | 1 | 4 | 2 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
 | Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
 | Regex library classes (4) | 0 | 0 | 4 |
-| Data model (13 concepts) | 1 | 6 | 6 |
+| Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 90 Rust tests total (59 unit + 31 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 94 Rust tests total (63 unit + 31 integration).
 
 **Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset uniqueness enforcement, regex library composition tools, morphological expanders.
 

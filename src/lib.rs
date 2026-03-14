@@ -56,7 +56,7 @@ struct PyRegexTagger {
 #[pymethods]
 impl PyRegexTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None))]
+    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -66,6 +66,7 @@ impl PyRegexTagger {
         group_attribute: Option<String>,
         priority_attribute: Option<String>,
         pattern_attribute: Option<String>,
+        ambiguous_output_layer: bool,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -86,6 +87,7 @@ impl PyRegexTagger {
             group_attribute,
             priority_attribute,
             pattern_attribute,
+            ambiguous_output_layer,
         };
 
         let tagger = RegexTagger::new(rules, config)
@@ -145,13 +147,14 @@ impl PyRegexTagger {
 
 /// Convenience function: tag text with patterns and return list of span dicts.
 #[pyfunction]
-#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false))]
+#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, ambiguous_output_layer=true))]
 fn rs_regex_tag(
     py: Python<'_>,
     text: &str,
     patterns: &Bound<'_, PyList>,
     conflict_resolver: &str,
     lowercase_text: bool,
+    ambiguous_output_layer: bool,
 ) -> PyResult<PyObject> {
     let mut rules = Vec::new();
     let mut all_attr_names = Vec::new();
@@ -179,6 +182,7 @@ fn rs_regex_tag(
         group_attribute: None,
         priority_attribute: None,
         pattern_attribute: None,
+        ambiguous_output_layer,
     };
 
     let tagger = RegexTagger::new(rules, config)
@@ -242,7 +246,7 @@ struct PySubstringTagger {
 #[pymethods]
 impl PySubstringTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None))]
+    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -253,6 +257,7 @@ impl PySubstringTagger {
         group_attribute: Option<String>,
         priority_attribute: Option<String>,
         pattern_attribute: Option<String>,
+        ambiguous_output_layer: bool,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -273,6 +278,7 @@ impl PySubstringTagger {
             group_attribute,
             priority_attribute,
             pattern_attribute,
+            ambiguous_output_layer,
         };
 
         let tagger = SubstringTagger::new(rules, token_separators, config)
@@ -299,7 +305,7 @@ impl PySubstringTagger {
 
 /// Convenience function: tag text with substring patterns and return list of span dicts.
 #[pyfunction]
-#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators=""))]
+#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", ambiguous_output_layer=true))]
 fn rs_substring_tag(
     py: Python<'_>,
     text: &str,
@@ -307,6 +313,7 @@ fn rs_substring_tag(
     conflict_resolver: &str,
     lowercase_text: bool,
     token_separators: &str,
+    ambiguous_output_layer: bool,
 ) -> PyResult<PyObject> {
     let mut rules = Vec::new();
     let mut all_attr_names = Vec::new();
@@ -334,6 +341,7 @@ fn rs_substring_tag(
         group_attribute: None,
         priority_attribute: None,
         pattern_attribute: None,
+        ambiguous_output_layer,
     };
 
     let tagger = SubstringTagger::new(rules, token_separators, config)
