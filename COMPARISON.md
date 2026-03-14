@@ -86,7 +86,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `CONVERSION_MAP` type coercions | `int`, `float`, `regex`, `string`, `callable`, `expression` | `int`, `float`, `string`, `bool` | **Partial** |
 | `rule_map` property | Maps patterns to grouped rules | — | **None** |
 | `output_attributes` property | Computes attribute union from all rules | Auto-collected in `rs_regex_tag` convenience function | **Partial** |
-| `missing_attributes` validation | Checks if rules have inconsistent attribute sets | — | **None** |
+| `missing_attributes` validation | Checks if rules have inconsistent attribute sets | `missing_attributes()` method on taggers + annotation normalization (fills missing attrs with `Null`) | **Full** |
 
 ---
 
@@ -298,15 +298,15 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | RegexTagger parameters (11) | 6 | 2 | 3 |
 | SubstringTagger parameters (12) | 8 | 2 | 2 |
 | Extraction rules (6 features) | 2 | 3 | 1 |
-| Rulesets (7 features) | 0 | 4 | 3 |
+| Rulesets (7 features) | 1 | 4 | 2 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
 | Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
 | Regex library classes (4) | 0 | 0 | 4 |
 | Data model (13 concepts) | 1 | 6 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 82 Rust tests total (51 unit + 31 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 90 Rust tests total (59 unit + 31 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset validation, regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset uniqueness enforcement, regex library composition tools, morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).

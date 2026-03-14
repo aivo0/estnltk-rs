@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Character-level span (not byte-level).
 /// Maps to EstNLTK's `ElementaryBaseSpan`.
@@ -185,4 +185,35 @@ pub struct TaggerConfig {
     pub group_attribute: Option<String>,
     pub priority_attribute: Option<String>,
     pub pattern_attribute: Option<String>,
+}
+
+/// Check if rules have inconsistent attribute sets.
+///
+/// Returns `true` if some rules don't define the same set of attributes as others.
+/// Maps to EstNLTK's `AmbiguousRuleset.missing_attributes` property.
+pub fn has_missing_attributes(rules_attrs: &[&HashMap<String, AnnotationValue>]) -> bool {
+    if rules_attrs.len() <= 1 {
+        return false;
+    }
+    let first_keys: HashSet<&String> = rules_attrs[0].keys().collect();
+    for attrs in &rules_attrs[1..] {
+        let keys: HashSet<&String> = attrs.keys().collect();
+        if keys != first_keys {
+            return true;
+        }
+    }
+    false
+}
+
+/// Normalize an annotation so it contains all `output_attributes` keys.
+///
+/// Missing attributes are filled with `AnnotationValue::Null`, matching
+/// EstNLTK's `Layer.add_annotation()` behavior where missing attributes
+/// get `None` (the layer's default value).
+pub fn normalize_annotation(annotation: &mut Annotation, output_attributes: &[String]) {
+    for attr_name in output_attributes {
+        if !annotation.0.contains_key(attr_name) {
+            annotation.0.insert(attr_name.clone(), AnnotationValue::Null);
+        }
+    }
 }

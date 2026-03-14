@@ -6,7 +6,10 @@ use crate::byte_char::byte_to_char_map;
 use crate::conflict::{
     conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches,
 };
-use crate::types::*;
+use crate::types::{
+    has_missing_attributes, normalize_annotation, Annotation, AnnotationValue, ConflictStrategy,
+    MatchSpan, TagResult, TaggedSpan, TaggerConfig,
+};
 
 /// A substring extraction rule — pattern string with static attributes.
 /// Unlike `ExtractionRule`, no compiled regex; the automaton handles matching.
@@ -223,6 +226,9 @@ impl SubstringTagger {
                     );
                 }
 
+                // Normalize: fill missing output_attributes with Null.
+                normalize_annotation(&mut annotation, &self.config.output_attributes);
+
                 // Merge into existing span or create new one.
                 if let Some(last) = spans.last_mut() {
                     if last.span == match_span {
@@ -243,6 +249,16 @@ impl SubstringTagger {
             ambiguous: true,
             spans,
         }
+    }
+
+    /// Check if rules have inconsistent attribute sets.
+    ///
+    /// Returns `true` if some rules don't define the same set of attributes.
+    /// Maps to EstNLTK's `AmbiguousRuleset.missing_attributes` property.
+    pub fn missing_attributes(&self) -> bool {
+        let attrs: Vec<&HashMap<String, AnnotationValue>> =
+            self.rules.iter().map(|r| &r.attributes).collect();
+        has_missing_attributes(&attrs)
     }
 }
 
@@ -476,6 +492,69 @@ mod tests {
         let result = tagger.tag("Washington");
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].annotations.len(), 2);
+    }
+
+    #[test]
+    fn test_missing_attributes_false_consistent() {
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("x".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("y".to_string()));
+        let rules = vec![
+            make_substring_rule("hello", a1, 0, 0),
+            make_substring_rule("world", a2, 0, 0),
+        ];
+        let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
+        assert!(!tagger.missing_attributes());
+    }
+
+    #[test]
+    fn test_missing_attributes_true_inconsistent() {
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("x".to_string()));
+        a1.insert("color".to_string(), AnnotationValue::Str("red".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("y".to_string()));
+        let rules = vec![
+            make_substring_rule("hello", a1, 0, 0),
+            make_substring_rule("world", a2, 0, 0),
+        ];
+        let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
+        assert!(tagger.missing_attributes());
+    }
+
+    #[test]
+    fn test_normalize_annotations_fills_null() {
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("greeting".to_string()));
+        a1.insert("score".to_string(), AnnotationValue::Int(10));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("noun".to_string()));
+
+        let rules = vec![
+            make_substring_rule("hello", a1, 0, 0),
+            make_substring_rule("world", a2, 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string(), "score".to_string()];
+        let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
+        let result = tagger.tag("hello world");
+
+        assert_eq!(result.spans.len(), 2);
+        // First span: has both attributes
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("score"),
+            Some(&AnnotationValue::Int(10))
+        );
+        // Second span: score should be Null
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("type"),
+            Some(&AnnotationValue::Str("noun".to_string()))
+        );
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("score"),
+            Some(&AnnotationValue::Null)
+        );
     }
 
     #[test]

@@ -100,6 +100,15 @@ impl PyRegexTagger {
         result.to_pydict(py)
     }
 
+    /// Check if rules have inconsistent attribute sets.
+    ///
+    /// Returns True if some rules don't define the same set of attributes as others.
+    /// Maps to EstNLTK's `AmbiguousRuleset.missing_attributes` property.
+    #[getter]
+    fn missing_attributes(&self) -> bool {
+        self.inner.missing_attributes()
+    }
+
     /// Return raw match spans as list of (start, end, rule_index) tuples.
     fn extract_matches(&self, py: Python<'_>, text: &str) -> PyResult<PyObject> {
         let raw_text = if self.inner.config.lowercase_text {
@@ -276,6 +285,15 @@ impl PySubstringTagger {
     fn tag(&self, py: Python<'_>, text: &str) -> PyResult<PyObject> {
         let result = self.inner.tag(text);
         result.to_pydict(py)
+    }
+
+    /// Check if rules have inconsistent attribute sets.
+    ///
+    /// Returns True if some rules don't define the same set of attributes as others.
+    /// Maps to EstNLTK's `AmbiguousRuleset.missing_attributes` property.
+    #[getter]
+    fn missing_attributes(&self) -> bool {
+        self.inner.missing_attributes()
     }
 }
 
