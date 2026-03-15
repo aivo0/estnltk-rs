@@ -80,7 +80,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 | Feature | EstNLTK | estnltk-rs | Coverage |
 |---------|---------|------------|----------|
-| `Ruleset` (unique patterns) | Enforces no duplicate patterns per rule type | No validation — duplicate patterns allowed | **None** |
+| `Ruleset` (unique patterns) | Enforces no duplicate patterns per rule type | `unique_patterns=true` rejects duplicate patterns at construction | **Full** |
 | `AmbiguousRuleset` (multi-pattern) | Allows multiple rules per pattern | Default behavior — all rules applied | **Partial** |
 | CSV loading (`ruleset.load()`) | Reads rules from CSV with typed columns (int, float, regex, string, callable, expression) | `rs_load_rules_csv` function with typed columns (int, float, string, bool) | **Partial** |
 | `CONVERSION_MAP` type coercions | `int`, `float`, `regex`, `string`, `callable`, `expression` | `int`, `float`, `string`, `bool` | **Partial** |
@@ -265,7 +265,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | `group != 0` | Silently uses specified group | `PyValueError` — rejected at construction |
 | `overlapped = True` | Uses `regex.finditer(overlapped=True)` | Not supported (no parameter; resharp returns non-overlapping) |
 | Invalid conflict_resolver string | `ValueError` at `_make_layer` time | `PyValueError` at construction time |
-| Conflicting patterns in Ruleset | `ValueError` from `Ruleset.add_rules` | No validation (duplicates silently allowed) |
+| Conflicting patterns in Ruleset | `ValueError` from `Ruleset.add_rules` | `PyValueError` when `unique_patterns=true` (default: duplicates allowed) |
 | Missing `pattern` key in dict | N/A (uses `StaticExtractionRule` dataclass) | `PyKeyError` |
 | Unsupported attribute value type | No restriction (any Python object) | `PyTypeError` (only str/int/float/bool/None) |
 | Invalid Aho-Corasick patterns | N/A (ahocorasick library handles) | `PyValueError` at `RsSubstringTagger` construction |
@@ -277,8 +277,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (17 unit tests) |
-| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (18 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (22 unit tests) |
+| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (22 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
@@ -298,15 +298,15 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | RegexTagger parameters (11) | 6 | 2 | 3 |
 | SubstringTagger parameters (12) | 9 | 1 | 2 |
 | Extraction rules (6 features) | 2 | 3 | 1 |
-| Rulesets (7 features) | 1 | 4 | 2 |
+| Rulesets (7 features) | 2 | 4 | 1 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
 | Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
 | Regex library classes (4) | 0 | 0 | 4 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 94 Rust tests total (63 unit + 31 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 103 Rust tests total (72 unit + 31 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), ruleset uniqueness enforcement, regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).

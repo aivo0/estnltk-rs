@@ -56,7 +56,7 @@ struct PyRegexTagger {
 #[pymethods]
 impl PyRegexTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true))]
+    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -67,6 +67,7 @@ impl PyRegexTagger {
         priority_attribute: Option<String>,
         pattern_attribute: Option<String>,
         ambiguous_output_layer: bool,
+        unique_patterns: bool,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -88,6 +89,7 @@ impl PyRegexTagger {
             priority_attribute,
             pattern_attribute,
             ambiguous_output_layer,
+            unique_patterns,
         };
 
         let tagger = RegexTagger::new(rules, config)
@@ -183,6 +185,7 @@ fn rs_regex_tag(
         priority_attribute: None,
         pattern_attribute: None,
         ambiguous_output_layer,
+        unique_patterns: false,
     };
 
     let tagger = RegexTagger::new(rules, config)
@@ -246,7 +249,7 @@ struct PySubstringTagger {
 #[pymethods]
 impl PySubstringTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true))]
+    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -258,6 +261,7 @@ impl PySubstringTagger {
         priority_attribute: Option<String>,
         pattern_attribute: Option<String>,
         ambiguous_output_layer: bool,
+        unique_patterns: bool,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -279,6 +283,7 @@ impl PySubstringTagger {
             priority_attribute,
             pattern_attribute,
             ambiguous_output_layer,
+            unique_patterns,
         };
 
         let tagger = SubstringTagger::new(rules, token_separators, config)
@@ -342,6 +347,7 @@ fn rs_substring_tag(
         priority_attribute: None,
         pattern_attribute: None,
         ambiguous_output_layer,
+        unique_patterns: false,
     };
 
     let tagger = SubstringTagger::new(rules, token_separators, config)

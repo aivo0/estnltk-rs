@@ -190,6 +190,11 @@ pub struct TaggerConfig {
     /// the output layer is marked non-ambiguous — matching EstNLTK's
     /// `ambiguous_output_layer` parameter.
     pub ambiguous_output_layer: bool,
+    /// When `true`, reject duplicate pattern strings at construction time.
+    /// Matches EstNLTK's `Ruleset` behavior (unique patterns enforced).
+    /// When `false` (default), duplicate patterns are allowed — matching
+    /// EstNLTK's `AmbiguousRuleset` behavior.
+    pub unique_patterns: bool,
 }
 
 /// Check if rules have inconsistent attribute sets.
@@ -208,6 +213,29 @@ pub fn has_missing_attributes(rules_attrs: &[&HashMap<String, AnnotationValue>])
         }
     }
     false
+}
+
+/// Check for duplicate pattern strings.
+///
+/// Returns `Err` with a message listing the first duplicate found, or `Ok(())` if all unique.
+/// Used when `TaggerConfig.unique_patterns` is `true` to enforce EstNLTK `Ruleset` semantics.
+pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), String> {
+    let mut seen = HashSet::new();
+    for &pat in patterns {
+        let key = if lowercase {
+            pat.to_lowercase()
+        } else {
+            pat.to_string()
+        };
+        if !seen.insert(key.clone()) {
+            return Err(format!(
+                "Duplicate pattern '{}' not allowed when unique_patterns=true. \
+                 Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
+                key
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Normalize an annotation so it contains all `output_attributes` keys.

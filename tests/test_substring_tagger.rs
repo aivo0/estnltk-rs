@@ -13,6 +13,7 @@ fn default_config() -> TaggerConfig {
         priority_attribute: None,
         pattern_attribute: None,
         ambiguous_output_layer: true,
+        unique_patterns: false,
     }
 }
 

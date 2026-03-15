@@ -7,8 +7,8 @@ use crate::conflict::{
     conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches,
 };
 use crate::types::{
-    has_missing_attributes, normalize_annotation, Annotation, AnnotationValue, ConflictStrategy,
-    MatchSpan, TagResult, TaggedSpan, TaggerConfig,
+    check_unique_patterns, has_missing_attributes, normalize_annotation, Annotation,
+    AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggedSpan, TaggerConfig,
 };
 
 /// A substring extraction rule — pattern string with static attributes.
@@ -44,6 +44,12 @@ impl SubstringTagger {
         token_separators: &str,
         config: TaggerConfig,
     ) -> Result<Self, String> {
+        // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
+        if config.unique_patterns {
+            let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
+            check_unique_patterns(&patterns, config.lowercase_text)?;
+        }
+
         // Deduplicate patterns, mapping each unique pattern to its rule indices.
         let mut pattern_map: HashMap<String, Vec<usize>> = HashMap::new();
         for (i, rule) in rules.iter().enumerate() {
@@ -294,6 +300,7 @@ mod tests {
             priority_attribute: None,
             pattern_attribute: None,
             ambiguous_output_layer: true,
+            unique_patterns: false,
         }
     }
 
@@ -608,6 +615,57 @@ mod tests {
         assert!(result.ambiguous);
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].annotations.len(), 2);
+    }
+
+    #[test]
+    fn test_unique_patterns_rejects_duplicate() {
+        let rules = vec![
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        let result = SubstringTagger::new(rules, "", cfg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("Duplicate pattern"));
+    }
+
+    #[test]
+    fn test_unique_patterns_allows_distinct() {
+        let rules = vec![
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+            make_substring_rule("world", HashMap::new(), 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        let result = SubstringTagger::new(rules, "", cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unique_patterns_case_insensitive_duplicate() {
+        // "Hello" and "hello" collapse when lowercase_text=true.
+        let rules = vec![
+            make_substring_rule("Hello", HashMap::new(), 0, 0),
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        cfg.lowercase_text = true;
+        let result = SubstringTagger::new(rules, "", cfg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("Duplicate pattern"));
+    }
+
+    #[test]
+    fn test_unique_patterns_false_allows_duplicates() {
+        // Default: duplicates allowed (AmbiguousRuleset semantics).
+        let rules = vec![
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+        ];
+        let result = SubstringTagger::new(rules, "", default_config());
+        assert!(result.is_ok());
     }
 
     #[test]

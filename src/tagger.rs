@@ -5,8 +5,9 @@ use crate::conflict::{
     conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches, MatchEntry,
 };
 use crate::types::{
-    has_missing_attributes, normalize_annotation, Annotation, AnnotationValue, ConflictStrategy,
-    ExtractionRule, MatchSpan, TagResult, TaggedSpan, TaggerConfig,
+    check_unique_patterns, has_missing_attributes, normalize_annotation, Annotation,
+    AnnotationValue, ConflictStrategy, ExtractionRule, MatchSpan, TagResult, TaggedSpan,
+    TaggerConfig,
 };
 
 /// The core regex tagger — Rust equivalent of EstNLTK's `RegexTagger`.
@@ -26,6 +27,13 @@ impl RegexTagger {
                 ));
             }
         }
+
+        // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
+        if config.unique_patterns {
+            let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
+            check_unique_patterns(&patterns, config.lowercase_text)?;
+        }
+
         Ok(Self { rules, config })
     }
 
@@ -212,6 +220,7 @@ mod tests {
             priority_attribute: None,
             pattern_attribute: None,
             ambiguous_output_layer: true,
+            unique_patterns: false,
         }
     }
 
@@ -453,6 +462,60 @@ mod tests {
         assert!(result.ambiguous);
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].annotations.len(), 2);
+    }
+
+    #[test]
+    fn test_unique_patterns_rejects_duplicate() {
+        let r1 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        let result = RegexTagger::new(vec![r1, r2], cfg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("Duplicate pattern"));
+    }
+
+    #[test]
+    fn test_unique_patterns_allows_distinct() {
+        let r1 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("world", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        let result = RegexTagger::new(vec![r1, r2], cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unique_patterns_case_sensitive() {
+        // "Hello" and "hello" are distinct when lowercase_text=false.
+        let r1 = make_rule("Hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        let result = RegexTagger::new(vec![r1, r2], cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unique_patterns_case_insensitive_duplicate() {
+        // "Hello" and "hello" collapse to same key when lowercase_text=true.
+        let r1 = make_rule("Hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.unique_patterns = true;
+        cfg.lowercase_text = true;
+        let result = RegexTagger::new(vec![r1, r2], cfg);
+        assert!(result.is_err());
+        assert!(result.err().unwrap().contains("Duplicate pattern"));
+    }
+
+    #[test]
+    fn test_unique_patterns_false_allows_duplicates() {
+        // Default behavior: duplicates allowed.
+        let r1 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let result = RegexTagger::new(vec![r1, r2], default_config());
+        assert!(result.is_ok());
     }
 
     #[test]
