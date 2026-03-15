@@ -482,6 +482,57 @@ fn rs_string_list_pattern(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
 }
 
+/// Build a regex choice group (alternation) from multiple regex patterns.
+///
+/// Port of EstNLTK's `ChoiceGroup` from the `regex_library` subpackage.
+/// Produces a non-capture group pattern like `(?:pattern1|pattern2|...)`.
+/// Each pattern is validated as a compilable regex.
+///
+/// Args:
+///     patterns: List of regex pattern strings to combine via alternation.
+///
+/// Returns:
+///     A regex pattern string like `(?:pattern1|pattern2|...)`.
+#[pyfunction]
+fn rs_choice_group_pattern(patterns: Vec<String>) -> PyResult<String> {
+    string_list::build_choice_group_pattern(&patterns)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+}
+
+/// Merge multiple string lists into a single choice group with longest-first sorting.
+///
+/// Port of EstNLTK's `ChoiceGroup` optimized merge for compatible `StringList` children.
+/// When all sub-expressions in a `ChoiceGroup` are `StringList`-s with the same
+/// character replacements, their strings are merged into a single list sorted by
+/// length (longest first) to guarantee that the longest match is found first.
+///
+/// Args:
+///     string_lists: List of string lists to merge (each is a list of literal strings).
+///     replacements: Optional shared character-to-regex replacement map
+///                   (e.g., `{" ": r"\s+"}` to allow flexible whitespace).
+///                   Must be the same for all string lists.
+///     ignore_case: If True, convert all strings to case-insensitive form
+///                  using `[Xx]` character class notation.
+///     ignore_case_flags_per_list: Optional per-list case sensitivity flags.
+///                                 Each inner list must match the length of its
+///                                 corresponding string list.
+///
+/// Returns:
+///     A regex pattern string with all strings merged and sorted longest-first.
+#[pyfunction]
+#[pyo3(signature = (string_lists, replacements=None, ignore_case=false, ignore_case_flags_per_list=None))]
+fn rs_merged_string_lists_pattern(
+    string_lists: Vec<Vec<String>>,
+    replacements: Option<HashMap<String, String>>,
+    ignore_case: bool,
+    ignore_case_flags_per_list: Option<Vec<Vec<bool>>>,
+) -> PyResult<String> {
+    let repl = replacements.unwrap_or_default();
+    let flags_ref = ignore_case_flags_per_list.as_deref();
+    string_list::build_merged_string_lists_pattern(&string_lists, &repl, ignore_case, flags_ref)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+}
+
 /// Python module definition.
 #[pymodule]
 fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -491,5 +542,7 @@ fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rs_substring_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_load_rules_csv, m)?)?;
     m.add_function(wrap_pyfunction!(rs_string_list_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_choice_group_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_merged_string_lists_pattern, m)?)?;
     Ok(())
 }

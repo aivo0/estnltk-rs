@@ -215,6 +215,109 @@ pub fn build_string_list_pattern(
     }
 }
 
+/// Build a regex choice group (alternation) from multiple regex patterns.
+///
+/// This is the Rust port of EstNLTK's `ChoiceGroup` from the `regex_library` subpackage.
+///
+/// The produced pattern:
+/// - Wraps choices in a non-capture group: `(?:pattern1|pattern2|...)`
+/// - Validates each pattern is a compilable regex (using resharp DFA engine)
+///
+/// When all sub-expressions are compatible `StringList`-s (same replacements),
+/// use `build_merged_string_lists_pattern` instead to get longest-first sorting
+/// guarantees across all lists.
+///
+/// # Arguments
+/// * `patterns` - List of regex pattern strings to combine via alternation
+///
+/// # Returns
+/// A regex pattern string like `(?:pattern1|pattern2|...)`, or an error message.
+pub fn build_choice_group_pattern(patterns: &[String]) -> Result<String, String> {
+    if patterns.is_empty() {
+        return Err("patterns list must not be empty".to_string());
+    }
+
+    // Validate each pattern compiles
+    for pattern in patterns {
+        resharp::Regex::new(pattern)
+            .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
+    }
+
+    if patterns.len() == 1 {
+        Ok(format!("(?:{})", patterns[0]))
+    } else {
+        Ok(format!("(?:{})", patterns.join("|")))
+    }
+}
+
+/// Merge multiple string lists into a single choice group with longest-first sorting.
+///
+/// This is the Rust port of EstNLTK's `ChoiceGroup` optimized merge for compatible
+/// `StringList` children from the `regex_library` subpackage.
+///
+/// When all sub-expressions are `StringList`-s with the same character replacements,
+/// `ChoiceGroup` merges all strings into a single list and sorts by length (longest
+/// first) to guarantee that the longest match is found first. This function
+/// implements that merge.
+///
+/// # Arguments
+/// * `string_lists` - List of string lists to merge
+/// * `replacements` - Shared character-to-regex replacement map (must be the same for
+///   all string lists — matching EstNLTK's compatibility requirement)
+/// * `ignore_case` - Global flag: convert all strings to case-insensitive form
+/// * `ignore_case_flags_per_list` - Optional per-list case sensitivity flags. Each
+///   inner `Vec<bool>` must match the length of its corresponding string list.
+///
+/// # Returns
+/// A regex pattern string with all strings merged and sorted longest-first.
+pub fn build_merged_string_lists_pattern(
+    string_lists: &[Vec<String>],
+    replacements: &HashMap<String, String>,
+    ignore_case: bool,
+    ignore_case_flags_per_list: Option<&[Vec<bool>]>,
+) -> Result<String, String> {
+    if string_lists.is_empty() {
+        return Err("string_lists must not be empty".to_string());
+    }
+
+    if let Some(flags_lists) = ignore_case_flags_per_list {
+        if flags_lists.len() != string_lists.len() {
+            return Err(format!(
+                "ignore_case_flags_per_list length ({}) must match string_lists length ({})",
+                flags_lists.len(),
+                string_lists.len()
+            ));
+        }
+        for (i, (strings, flags)) in string_lists.iter().zip(flags_lists.iter()).enumerate() {
+            if flags.len() != strings.len() {
+                return Err(format!(
+                    "ignore_case_flags_per_list[{}] length ({}) must match string_lists[{}] length ({})",
+                    i, flags.len(), i, strings.len()
+                ));
+            }
+        }
+    }
+
+    // Merge all strings and flags into flat lists
+    let mut all_strings: Vec<String> = Vec::new();
+    let mut all_flags: Vec<bool> = Vec::new();
+
+    for (i, strings) in string_lists.iter().enumerate() {
+        all_strings.extend(strings.iter().cloned());
+        if let Some(flags_lists) = ignore_case_flags_per_list {
+            all_flags.extend(flags_lists[i].iter().cloned());
+        }
+    }
+
+    let flags_ref = if all_flags.is_empty() {
+        None
+    } else {
+        Some(all_flags.as_slice())
+    };
+
+    build_string_list_pattern(&all_strings, replacements, ignore_case, flags_ref)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,5 +482,184 @@ mod tests {
         // 'a' stays, '-' (escaped to '\-') replaced, 'b' stays, ' ' (escaped to '\ ') replaced
         assert!(result.contains("(?:[\\-\\s])"));
         assert!(result.contains("(?:\\s+)"));
+    }
+
+    // --- ChoiceGroup tests ---
+
+    #[test]
+    fn test_choice_group_basic() {
+        let patterns = vec![r"\d+".to_string(), r"[a-z]+".to_string()];
+        let result = build_choice_group_pattern(&patterns).unwrap();
+        assert_eq!(result, r"(?:\d+|[a-z]+)");
+    }
+
+    #[test]
+    fn test_choice_group_single_pattern() {
+        let patterns = vec![r"\w+".to_string()];
+        let result = build_choice_group_pattern(&patterns).unwrap();
+        assert_eq!(result, r"(?:\w+)");
+    }
+
+    #[test]
+    fn test_choice_group_empty_error() {
+        let result = build_choice_group_pattern(&[]);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_choice_group_invalid_pattern() {
+        let patterns = vec![r"\d+".to_string(), r"[unclosed".to_string()];
+        let result = build_choice_group_pattern(&patterns);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("[unclosed"));
+    }
+
+    #[test]
+    fn test_choice_group_three_patterns() {
+        let patterns = vec![
+            r"[A-Z][a-z]+".to_string(),
+            r"\d{4}-\d{2}-\d{2}".to_string(),
+            r"[a-z]+@[a-z]+\.[a-z]+".to_string(),
+        ];
+        let result = build_choice_group_pattern(&patterns).unwrap();
+        assert_eq!(
+            result,
+            r"(?:[A-Z][a-z]+|\d{4}-\d{2}-\d{2}|[a-z]+@[a-z]+\.[a-z]+)"
+        );
+    }
+
+    #[test]
+    fn test_choice_group_estonian_patterns() {
+        let patterns = vec![
+            r"[öäüõ]+".to_string(),
+            r"[A-ZÖÄÜÕ][a-zöäüõ]+".to_string(),
+        ];
+        let result = build_choice_group_pattern(&patterns).unwrap();
+        assert_eq!(result, r"(?:[öäüõ]+|[A-ZÖÄÜÕ][a-zöäüõ]+)");
+    }
+
+    #[test]
+    fn test_choice_group_with_lookaround() {
+        // resharp supports lookaround natively
+        let patterns = vec![r"(?<=\s)\d+".to_string(), r"\d+(?=\s)".to_string()];
+        let result = build_choice_group_pattern(&patterns).unwrap();
+        assert_eq!(result, r"(?:(?<=\s)\d+|\d+(?=\s))");
+    }
+
+    // --- Merged StringList tests ---
+
+    #[test]
+    fn test_merged_string_lists_basic() {
+        let lists = vec![
+            vec!["cat".to_string(), "dog".to_string()],
+            vec!["elephant".to_string(), "ant".to_string()],
+        ];
+        let result =
+            build_merged_string_lists_pattern(&lists, &HashMap::new(), false, None).unwrap();
+        // All merged and sorted by length (longest first), then alphabetically: elephant, ant, cat, dog
+        assert_eq!(result, "(?:elephant|ant|cat|dog)");
+    }
+
+    #[test]
+    fn test_merged_string_lists_empty_error() {
+        let result =
+            build_merged_string_lists_pattern(&[], &HashMap::new(), false, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_string_lists_with_case_flags() {
+        let lists = vec![
+            vec!["Ab".to_string()],
+            vec!["Cd".to_string()],
+        ];
+        let flags = vec![vec![true], vec![false]];
+        let result = build_merged_string_lists_pattern(
+            &lists,
+            &HashMap::new(),
+            false,
+            Some(&flags),
+        )
+        .unwrap();
+        // "Ab" case-insensitive, "Cd" literal; both 2 chars, "Ab" < "Cd" alphabetically
+        assert_eq!(result, "(?:[Aa][Bb]|Cd)");
+    }
+
+    #[test]
+    fn test_merged_string_lists_with_replacements() {
+        let lists = vec![
+            vec![" punkt".to_string()],
+            vec![" pall".to_string()],
+        ];
+        let mut replacements = HashMap::new();
+        replacements.insert(" ".to_string(), r"\s+".to_string());
+        let result =
+            build_merged_string_lists_pattern(&lists, &replacements, false, None).unwrap();
+        assert_eq!(result, "(?:(?:\\s+)punkt|(?:\\s+)pall)");
+    }
+
+    #[test]
+    fn test_merged_string_lists_deduplication() {
+        let lists = vec![
+            vec!["cat".to_string(), "dog".to_string()],
+            vec!["cat".to_string(), "fish".to_string()],
+        ];
+        let result =
+            build_merged_string_lists_pattern(&lists, &HashMap::new(), false, None).unwrap();
+        // "cat" appears in both lists but should be deduplicated
+        assert_eq!(result, "(?:fish|cat|dog)");
+    }
+
+    #[test]
+    fn test_merged_string_lists_flags_length_mismatch() {
+        let lists = vec![
+            vec!["a".to_string()],
+            vec!["b".to_string()],
+        ];
+        let flags = vec![vec![true]]; // only 1 flags list for 2 string lists
+        let result = build_merged_string_lists_pattern(
+            &lists,
+            &HashMap::new(),
+            false,
+            Some(&flags),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_string_lists_inner_flags_length_mismatch() {
+        let lists = vec![vec!["a".to_string(), "b".to_string()]];
+        let flags = vec![vec![true]]; // 1 flag for 2 strings
+        let result = build_merged_string_lists_pattern(
+            &lists,
+            &HashMap::new(),
+            false,
+            Some(&flags),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_merged_string_lists_global_ignore_case() {
+        let lists = vec![
+            vec!["Ab".to_string()],
+            vec!["Cd".to_string()],
+        ];
+        let result =
+            build_merged_string_lists_pattern(&lists, &HashMap::new(), true, None).unwrap();
+        assert_eq!(result, "(?:[Aa][Bb]|[Cc][Dd])");
+    }
+
+    #[test]
+    fn test_merged_string_lists_estonian() {
+        let lists = vec![
+            vec!["täna".to_string(), "homme".to_string()],
+            vec!["üleeile".to_string(), "eile".to_string()],
+        ];
+        let result =
+            build_merged_string_lists_pattern(&lists, &HashMap::new(), false, None).unwrap();
+        // Sorted by byte length: üleeile (9), homme (5), täna (5, ä=2 bytes), eile (4)
+        assert_eq!(result, "(?:üleeile|homme|täna|eile)");
     }
 }

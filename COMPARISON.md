@@ -158,7 +158,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 |-------|---------|------------|----------|
 | `RegexElement` | Base class: wraps pattern with test infrastructure | — | **None** |
 | `RegexPattern` | Template: `pattern.format(sub=RegexElement(...))` | — | **None** |
-| `ChoiceGroup` | Alternation of `RegexElement` children with test merging | — | **None** |
+| `ChoiceGroup` | Alternation of `RegexElement` children with test merging | `rs_choice_group_pattern` function: validates and joins patterns via alternation. `rs_merged_string_lists_pattern` function: merges compatible StringLists with longest-first sorting | **Partial** |
 | `StringList` | Sorted string list → regex choice (longest first, case/replacement options) | `rs_string_list_pattern` function: longest-first sorting, regex escaping, `ignore_case` (`[Xx]` notation), per-string case flags, character replacement maps, deduplication | **Partial** |
 
 **Features not ported:**
@@ -168,6 +168,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 - Named capture group management
 - `group_name` / `description` metadata fields
 - `from_file()` / `to_csv()` static methods
+- Test merging (`merge_positive_tests`, `merge_negative_tests`, `merge_extraction_tests`) — Python-specific test infrastructure
 
 **Features ported (StringList):**
 - Auto-sorting strings by length (longest first) for greedy matching
@@ -177,10 +178,16 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 - String deduplication (case-aware when `ignore_case` is set)
 - Non-capture group wrapping of output pattern
 
+**Features ported (ChoiceGroup):**
+- Simple alternation: `rs_choice_group_pattern(patterns)` validates each pattern with resharp and produces `(?:pattern1|pattern2|...)`
+- Compatible StringList merge: `rs_merged_string_lists_pattern(string_lists, ...)` merges multiple string lists with the same replacements into a single pattern with longest-first sorting — matching EstNLTK's `ChoiceGroup` optimization for compatible `StringList` children
+- Per-list case sensitivity flags supported via `ignore_case_flags_per_list` parameter
+
 **Notes:**
 - These are development-time tools for building and testing regex patterns. They produce standard regex strings that can be passed to either engine.
 - Since resharp accepts standard regex syntax (minus lazy quantifiers), patterns built with `regex_library` can often be used directly. Capture groups are supported via two-pass extraction.
 - `StringList` is ported as a pure function (`rs_string_list_pattern`) rather than a class, since the Rust side does not need the test infrastructure or Jupyter display from `RegexElement`.
+- `ChoiceGroup` is ported as two pure functions: `rs_choice_group_pattern` for regex pattern alternation, and `rs_merged_string_lists_pattern` for the StringList merge optimization. The test merging infrastructure is Python-specific and not ported.
 
 ---
 
@@ -297,6 +304,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Overlapped matching | Implicit in existing test suite | 10 unit tests (basic, multibyte, capture groups, conflict resolution, attributes) |
 | Match attribute | Implicit in existing test suite | 7 unit tests (basic, capture groups, multibyte, lowercase, with attributes, disabled, overlapped) |
 | StringList pattern composition | `StringList` class tests | `src/string_list.rs` (16 unit tests) |
+| ChoiceGroup pattern composition | `ChoiceGroup` class tests | `src/string_list.rs` (16 unit tests: 7 choice group + 9 merged string lists) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
 | SpanTagger tests | Separate test file | — |
@@ -316,12 +324,12 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 1 | 2 (+1 N/A) |
 | Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
-| Regex library classes (4) | 0 | 1 | 3 |
+| Regex library classes (4) | 0 | 2 | 2 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 148 Rust tests total (115 unit + 33 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 164 Rust tests total (131 unit + 33 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library test infrastructure (`RegexElement`, `RegexPattern`), morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
 
