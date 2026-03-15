@@ -316,6 +316,24 @@ impl RegexTagger {
             self.rules.iter().map(|r| &r.attributes).collect();
         has_missing_attributes(&attrs)
     }
+
+    /// Return a map of pattern strings to their rule indices.
+    ///
+    /// Maps to EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` property.
+    /// Groups rules by their pattern string, so patterns shared by multiple rules
+    /// (ambiguous rules) map to multiple indices.
+    pub fn rule_map(&self) -> HashMap<String, Vec<usize>> {
+        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, rule) in self.rules.iter().enumerate() {
+            let key = if self.config.lowercase_text {
+                rule.pattern_str.to_lowercase()
+            } else {
+                rule.pattern_str.clone()
+            };
+            map.entry(key).or_default().push(i);
+        }
+        map
+    }
 }
 
 /// Convenience: build an ExtractionRule from components.
@@ -1100,5 +1118,77 @@ mod tests {
             result.spans[1].annotations[0].0.get("match"),
             Some(&AnnotationValue::Str("aa".to_string()))
         );
+    }
+
+    // ── rule_map tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_map_distinct_patterns() {
+        let r1 = make_rule("aaa", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("bbb", HashMap::new(), 0, 0).unwrap();
+        let tagger = RegexTagger::new(vec![r1, r2], default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["aaa"], vec![0]);
+        assert_eq!(map["bbb"], vec![1]);
+    }
+
+    #[test]
+    fn test_rule_map_ambiguous_same_pattern() {
+        // Two rules sharing the same pattern are grouped together.
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("x".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("y".to_string()));
+        let r1 = make_rule("hello", a1, 0, 0).unwrap();
+        let r2 = make_rule("hello", a2, 0, 0).unwrap();
+        let tagger = RegexTagger::new(vec![r1, r2], default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["hello"], vec![0, 1]);
+    }
+
+    #[test]
+    fn test_rule_map_case_insensitive() {
+        // With lowercase_text, patterns are grouped by lowercased key.
+        let r1 = make_rule("Hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.lowercase_text = true;
+        let tagger = RegexTagger::new(vec![r1, r2], cfg).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["hello"], vec![0, 1]);
+    }
+
+    #[test]
+    fn test_rule_map_case_sensitive() {
+        // Without lowercase_text, "Hello" and "hello" are distinct.
+        let r1 = make_rule("Hello", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let tagger = RegexTagger::new(vec![r1, r2], default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["Hello"], vec![0]);
+        assert_eq!(map["hello"], vec![1]);
+    }
+
+    #[test]
+    fn test_rule_map_empty() {
+        let tagger = RegexTagger::new(vec![], default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_rule_map_three_rules_two_patterns() {
+        let r1 = make_rule("aaa", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("bbb", HashMap::new(), 0, 0).unwrap();
+        let r3 = make_rule("aaa", HashMap::new(), 0, 1).unwrap();
+        let tagger = RegexTagger::new(vec![r1, r2, r3], default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["aaa"], vec![0, 2]);
+        assert_eq!(map["bbb"], vec![1]);
     }
 }

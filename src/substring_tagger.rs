@@ -27,7 +27,7 @@ pub struct SubstringRule {
 /// Supports token separator boundary checking and all conflict resolution strategies.
 pub struct SubstringTagger {
     automaton: AhoCorasick,
-    rules: Vec<SubstringRule>,
+    pub rules: Vec<SubstringRule>,
     /// AC pattern_id → list of rule indices sharing that pattern.
     pattern_to_rules: Vec<Vec<usize>>,
     token_separators: Vec<char>,
@@ -268,6 +268,24 @@ impl SubstringTagger {
         let attrs: Vec<&HashMap<String, AnnotationValue>> =
             self.rules.iter().map(|r| &r.attributes).collect();
         has_missing_attributes(&attrs)
+    }
+
+    /// Return a map of pattern strings to their rule indices.
+    ///
+    /// Maps to EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` property.
+    /// Groups rules by their pattern string, so patterns shared by multiple rules
+    /// (ambiguous rules) map to multiple indices.
+    pub fn rule_map(&self) -> HashMap<String, Vec<usize>> {
+        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, rule) in self.rules.iter().enumerate() {
+            let key = if self.config.lowercase_text {
+                rule.pattern_str.to_lowercase()
+            } else {
+                rule.pattern_str.clone()
+            };
+            map.entry(key).or_default().push(i);
+        }
+        map
     }
 }
 
@@ -689,5 +707,71 @@ mod tests {
             result.spans[1].annotations[0].0.get("_pattern"),
             Some(&AnnotationValue::Str("world".to_string()))
         );
+    }
+
+    // ── rule_map tests ────────────────────────────────────────────────
+
+    #[test]
+    fn test_rule_map_distinct_patterns() {
+        let rules = vec![
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+            make_substring_rule("world", HashMap::new(), 0, 0),
+        ];
+        let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["hello"], vec![0]);
+        assert_eq!(map["world"], vec![1]);
+    }
+
+    #[test]
+    fn test_rule_map_ambiguous_same_pattern() {
+        let mut a1 = HashMap::new();
+        a1.insert("type".to_string(), AnnotationValue::Str("capital".to_string()));
+        let mut a2 = HashMap::new();
+        a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
+        let rules = vec![
+            make_substring_rule("Washington", a1, 0, 0),
+            make_substring_rule("Washington", a2, 0, 0),
+        ];
+        let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["Washington"], vec![0, 1]);
+    }
+
+    #[test]
+    fn test_rule_map_case_insensitive() {
+        let rules = vec![
+            make_substring_rule("Hello", HashMap::new(), 0, 0),
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+        ];
+        let mut cfg = default_config();
+        cfg.lowercase_text = true;
+        let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 1);
+        assert_eq!(map["hello"], vec![0, 1]);
+    }
+
+    #[test]
+    fn test_rule_map_empty() {
+        let tagger = SubstringTagger::new(vec![], "", default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn test_rule_map_three_rules_two_patterns() {
+        let rules = vec![
+            make_substring_rule("hello", HashMap::new(), 0, 0),
+            make_substring_rule("world", HashMap::new(), 0, 0),
+            make_substring_rule("hello", HashMap::new(), 0, 1),
+        ];
+        let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
+        let map = tagger.rule_map();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["hello"], vec![0, 2]);
+        assert_eq!(map["world"], vec![1]);
     }
 }

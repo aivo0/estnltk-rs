@@ -122,6 +122,34 @@ impl PyRegexTagger {
         self.inner.missing_attributes()
     }
 
+    /// Return a dict mapping pattern strings to lists of rule dicts.
+    ///
+    /// Maps to EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` property.
+    /// Each rule dict has keys: pattern, group, priority, attributes.
+    #[getter]
+    fn rule_map(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let map = self.inner.rule_map();
+        let result = PyDict::new_bound(py);
+        for (pattern, rule_indices) in &map {
+            let rules_list = PyList::empty_bound(py);
+            for &idx in rule_indices {
+                let rule = &self.inner.rules[idx];
+                let rule_dict = PyDict::new_bound(py);
+                rule_dict.set_item("pattern", &rule.pattern_str)?;
+                rule_dict.set_item("group", rule.group)?;
+                rule_dict.set_item("priority", rule.priority)?;
+                let attrs = PyDict::new_bound(py);
+                for (k, v) in &rule.attributes {
+                    attrs.set_item(k, v.to_pyobject(py))?;
+                }
+                rule_dict.set_item("attributes", attrs)?;
+                rules_list.append(rule_dict)?;
+            }
+            result.set_item(pattern, rules_list)?;
+        }
+        Ok(result.unbind().into())
+    }
+
     /// Return raw match spans as list of (start, end, rule_index) tuples.
     fn extract_matches(&self, py: Python<'_>, text: &str) -> PyResult<PyObject> {
         let raw_text = if self.inner.config.lowercase_text {
@@ -353,6 +381,34 @@ impl PySubstringTagger {
     #[getter]
     fn missing_attributes(&self) -> bool {
         self.inner.missing_attributes()
+    }
+
+    /// Return a dict mapping pattern strings to lists of rule dicts.
+    ///
+    /// Maps to EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` property.
+    /// Each rule dict has keys: pattern, group, priority, attributes.
+    #[getter]
+    fn rule_map(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let map = self.inner.rule_map();
+        let result = PyDict::new_bound(py);
+        for (pattern, rule_indices) in &map {
+            let rules_list = PyList::empty_bound(py);
+            for &idx in rule_indices {
+                let rule = &self.inner.rules[idx];
+                let rule_dict = PyDict::new_bound(py);
+                rule_dict.set_item("pattern", &rule.pattern_str)?;
+                rule_dict.set_item("group", rule.group)?;
+                rule_dict.set_item("priority", rule.priority)?;
+                let attrs = PyDict::new_bound(py);
+                for (k, v) in &rule.attributes {
+                    attrs.set_item(k, v.to_pyobject(py))?;
+                }
+                rule_dict.set_item("attributes", attrs)?;
+                rules_list.append(rule_dict)?;
+            }
+            result.set_item(pattern, rules_list)?;
+        }
+        Ok(result.unbind().into())
     }
 }
 
