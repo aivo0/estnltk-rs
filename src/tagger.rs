@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::byte_char::byte_to_char_map;
 use crate::conflict::{
@@ -37,7 +37,11 @@ impl RegexTagger {
         };
 
         // Step 1: Extract all matches with byte→char conversion.
-        let mut all_matches = self.extract_matches(&raw_text);
+        let mut all_matches = if self.config.overlapped {
+            self.extract_matches_overlapping(&raw_text)
+        } else {
+            self.extract_matches(&raw_text)
+        };
 
         // Step 2: Sort canonically by (start, end).
         all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
@@ -97,6 +101,96 @@ impl RegexTagger {
                     continue;
                 }
                 matches.push((MatchSpan::new(char_start, char_end), rule_idx));
+            }
+        }
+
+        matches
+    }
+
+    /// Extract overlapping matches from all rules.
+    ///
+    /// For each rule, repeatedly calls `find_all` on progressively advancing
+    /// sub-slices of the input.  After collecting all non-overlapping matches
+    /// from a given start position, the search restarts from `min_new_start + 1`
+    /// (the next UTF-8 character boundary after the earliest newly discovered
+    /// match) to find matches that overlap with previously found ones.
+    ///
+    /// Mirrors Python's `regex.finditer(pattern, text, overlapped=True)`.
+    fn extract_matches_overlapping(&self, text: &str) -> Vec<MatchEntry> {
+        let b2c = byte_to_char_map(text);
+        let text_bytes = text.as_bytes();
+        let mut matches = Vec::new();
+
+        for (rule_idx, rule) in self.rules.iter().enumerate() {
+            let mut seen: HashSet<(usize, usize)> = HashSet::new();
+            let mut search_pos: usize = 0;
+
+            while search_pos < text_bytes.len() {
+                let sub = &text_bytes[search_pos..];
+                let found = match rule.compiled.find_all(sub) {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                if found.is_empty() {
+                    break;
+                }
+
+                let mut any_new = false;
+                let mut min_new_start = usize::MAX;
+
+                for m in &found {
+                    let abs_start = m.start + search_pos;
+                    let abs_end = m.end + search_pos;
+
+                    // Narrow to capture group if needed.
+                    let (byte_start, byte_end) = if rule.group == 0 {
+                        (abs_start, abs_end)
+                    } else {
+                        let capture_re = rule.capture_re.as_ref().unwrap();
+                        let substring = match text.get(abs_start..abs_end) {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        if let Some(caps) = capture_re.captures(substring) {
+                            if let Some(group_match) = caps.get(rule.group as usize) {
+                                (
+                                    abs_start + group_match.start(),
+                                    abs_start + group_match.end(),
+                                )
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            continue;
+                        }
+                    };
+
+                    if !seen.insert((byte_start, byte_end)) {
+                        continue; // Already recorded this exact span for this rule.
+                    }
+                    any_new = true;
+                    min_new_start = min_new_start.min(abs_start);
+
+                    let char_start = b2c[byte_start];
+                    let char_end = b2c[byte_end];
+                    if char_start == char_end {
+                        continue;
+                    }
+                    matches.push((MatchSpan::new(char_start, char_end), rule_idx));
+                }
+
+                if !any_new {
+                    break;
+                }
+
+                // Advance to the next UTF-8 character boundary after the
+                // earliest new match's start.
+                search_pos = min_new_start + 1;
+                while search_pos < text_bytes.len()
+                    && !text.is_char_boundary(search_pos)
+                {
+                    search_pos += 1;
+                }
             }
         }
 
@@ -275,6 +369,7 @@ mod tests {
             pattern_attribute: None,
             ambiguous_output_layer: true,
             unique_patterns: false,
+            overlapped: false,
         }
     }
 
@@ -726,5 +821,141 @@ mod tests {
         let result = tagger.tag("Muna ja kana.");
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].span, MatchSpan::new(5, 7));
+    }
+
+    // ── Overlapped matching tests ──────────────────────────────────────
+
+    #[test]
+    fn test_overlapped_aa_in_aaa() {
+        // Pattern "aa" on "aaa" with overlapped=true should find 2 matches:
+        // (0,2) and (1,3).
+        let rule = make_rule("aa", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("aaa");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 2));
+        assert_eq!(result.spans[1].span, MatchSpan::new(1, 3));
+    }
+
+    #[test]
+    fn test_overlapped_false_aa_in_aaa() {
+        // Without overlapped, "aa" on "aaa" finds only 1 match.
+        let rule = make_rule("aa", HashMap::new(), 0, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("aaa");
+        assert_eq!(result.spans.len(), 1);
+    }
+
+    #[test]
+    fn test_overlapped_no_overlap() {
+        // Non-overlapping matches should be identical with overlapped=true.
+        let rule = make_rule("ab", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("ab cd ab");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 2));
+        assert_eq!(result.spans[1].span, MatchSpan::new(6, 8));
+    }
+
+    #[test]
+    fn test_overlapped_estonian_multibyte() {
+        // Pattern "öö" on "öööö" (4 ö's) should find 3 overlapping matches.
+        let rule = make_rule("öö", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("öööö");
+        assert_eq!(result.spans.len(), 3);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 2));
+        assert_eq!(result.spans[1].span, MatchSpan::new(1, 3));
+        assert_eq!(result.spans[2].span, MatchSpan::new(2, 4));
+    }
+
+    #[test]
+    fn test_overlapped_multiple_rules() {
+        // Two rules, both with overlapping matches.
+        let r1 = make_rule("aba", HashMap::new(), 0, 0).unwrap();
+        let r2 = make_rule("bab", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![r1, r2], cfg).unwrap();
+        let result = tagger.tag("abab");
+        // r1 "aba" matches (0,3)
+        // r2 "bab" matches (1,4)
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 3));
+        assert_eq!(result.spans[1].span, MatchSpan::new(1, 4));
+    }
+
+    #[test]
+    fn test_overlapped_with_attributes() {
+        let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), AnnotationValue::Str("pair".to_string()));
+        let rule = make_rule("aa", attrs, 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        cfg.output_attributes = vec!["type".to_string()];
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("aaa");
+        assert_eq!(result.spans.len(), 2);
+        for span in &result.spans {
+            assert_eq!(
+                span.annotations[0].0.get("type"),
+                Some(&AnnotationValue::Str("pair".to_string()))
+            );
+        }
+    }
+
+    #[test]
+    fn test_overlapped_with_capture_group() {
+        // Overlapping with capture groups: (\d)\d on "123" finds
+        // group 1 at (0,1) and (1,2).
+        let rule = make_rule(r"(\d)\d", HashMap::new(), 1, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("123");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 1)); // "1"
+        assert_eq!(result.spans[1].span, MatchSpan::new(1, 2)); // "2"
+    }
+
+    #[test]
+    fn test_overlapped_with_conflict_resolution() {
+        // Overlapping matches + KEEP_MAXIMAL.
+        let rule = make_rule("aa", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        cfg.conflict_strategy = ConflictStrategy::KeepMaximal;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("aaa");
+        // Overlapped finds (0,2) and (1,3). Neither covers the other,
+        // so KEEP_MAXIMAL keeps both.
+        assert_eq!(result.spans.len(), 2);
+    }
+
+    #[test]
+    fn test_overlapped_no_match() {
+        let rule = make_rule("xyz", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("hello");
+        assert_eq!(result.spans.len(), 0);
+    }
+
+    #[test]
+    fn test_overlapped_single_char_pattern() {
+        // Single-char pattern — overlapped should behave same as non-overlapped.
+        let rule = make_rule("a", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("aaa");
+        assert_eq!(result.spans.len(), 3);
     }
 }

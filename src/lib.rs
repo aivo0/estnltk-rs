@@ -56,7 +56,7 @@ struct PyRegexTagger {
 #[pymethods]
 impl PyRegexTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
+    #[pyo3(signature = (patterns, output_layer="regexes", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false, overlapped=false))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -68,6 +68,7 @@ impl PyRegexTagger {
         pattern_attribute: Option<String>,
         ambiguous_output_layer: bool,
         unique_patterns: bool,
+        overlapped: bool,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -90,6 +91,7 @@ impl PyRegexTagger {
             pattern_attribute,
             ambiguous_output_layer,
             unique_patterns,
+            overlapped,
         };
 
         let tagger = RegexTagger::new(rules, config)
@@ -149,7 +151,7 @@ impl PyRegexTagger {
 
 /// Convenience function: tag text with patterns and return list of span dicts.
 #[pyfunction]
-#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, ambiguous_output_layer=true))]
+#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, ambiguous_output_layer=true, overlapped=false))]
 fn rs_regex_tag(
     py: Python<'_>,
     text: &str,
@@ -157,6 +159,7 @@ fn rs_regex_tag(
     conflict_resolver: &str,
     lowercase_text: bool,
     ambiguous_output_layer: bool,
+    overlapped: bool,
 ) -> PyResult<PyObject> {
     let mut rules = Vec::new();
     let mut all_attr_names = Vec::new();
@@ -186,6 +189,7 @@ fn rs_regex_tag(
         pattern_attribute: None,
         ambiguous_output_layer,
         unique_patterns: false,
+        overlapped,
     };
 
     let tagger = RegexTagger::new(rules, config)
@@ -284,6 +288,7 @@ impl PySubstringTagger {
             pattern_attribute,
             ambiguous_output_layer,
             unique_patterns,
+            overlapped: false,
         };
 
         let tagger = SubstringTagger::new(rules, token_separators, config)
@@ -348,6 +353,7 @@ fn rs_substring_tag(
         pattern_attribute: None,
         ambiguous_output_layer,
         unique_patterns: false,
+        overlapped: false,
     };
 
     let tagger = SubstringTagger::new(rules, token_separators, config)

@@ -49,7 +49,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `output_layer` | str, default `'regexes'` | str, default `"regexes"` | **Full** | |
 | `output_attributes` | Sequence, default `None` | `Vec<String>`, default auto-collected | **Full** | |
 | `conflict_resolver` | str or callable | str only | **Partial** | Custom callable resolvers not supported |
-| `overlapped` | bool, default `False` | Not supported; `True` rejected | **Partial** | resharp's `find_all` returns non-overlapping matches only |
+| `overlapped` | bool, default `False` | bool, default `false` | **Full** | Iterative re-search from `start+1` after each match to find overlaps |
 | `lowercase_text` | bool, default `False` | bool, default `false` | **Full** | |
 | `decorator` (global) | `Callable[[Text, ElementaryBaseSpan, Dict], Optional[Dict]]` | — | **None** | Python callables can't run in Rust |
 | `match_attribute` | str, default `'match'`; stores `re.Match` object | — | **None** | resharp returns byte ranges, no `Match` object |
@@ -135,7 +135,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | Time complexity | Exponential worst case | Guaranteed linear |
 | Capture groups | Full support (numbered and named) | Numbered groups via two-pass extraction (resharp match + `regex` crate group extraction). Named groups not supported |
 | Lazy quantifiers | `.*?`, `.+?`, etc. | Not supported |
-| Overlapped matching | `finditer(overlapped=True)` | Not supported (`find_all` is non-overlapping) |
+| Overlapped matching | `finditer(overlapped=True)` | Supported via `overlapped=true` parameter (iterative re-search) |
 | Matching semantics | Leftmost-first | Leftmost-longest |
 | Lookaround | Limited (fixed-width lookbehind) | Native support |
 | Boolean operations | Not supported | Intersection (`&`), complement (`~`) |
@@ -145,7 +145,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 **Semantic differences that affect output:**
 - Alternation: `cat|catfish` → Python matches `"cat"`, resharp matches `"catfish"` (leftmost-longest)
 - Greedy vs. lazy: Python `a.*?b` matches shortest `a...b`; resharp has no equivalent (must use negated character class like `a[^b]*b`)
-- Overlapping: Pattern `aa` on `"aaa"` → Python with `overlapped=True` finds 2 matches; resharp finds 1
+- Overlapping: Pattern `aa` on `"aaa"` → both find 2 matches with `overlapped=True` (Rust iteratively re-searches from `start+1`); without overlapping, resharp finds 1
 
 ---
 
@@ -264,7 +264,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |----------|---------|------------|
 | Invalid regex pattern | `regex.error` at `Regex()` construction | `PyValueError` at tagger construction |
 | `group != 0` | Silently uses specified group | Two-pass extraction: resharp finds full match, `regex` crate extracts group. `PyValueError` if group index exceeds capture count or pattern uses resharp-only syntax |
-| `overlapped = True` | Uses `regex.finditer(overlapped=True)` | Not supported (no parameter; resharp returns non-overlapping) |
+| `overlapped = True` | Uses `regex.finditer(overlapped=True)` | Uses iterative re-search from `start+1` after each match |
 | Invalid conflict_resolver string | `ValueError` at `_make_layer` time | `PyValueError` at construction time |
 | Conflicting patterns in Ruleset | `ValueError` from `Ruleset.add_rules` | `PyValueError` when `unique_patterns=true` (default: duplicates allowed) |
 | Missing `pattern` key in dict | N/A (uses `StaticExtractionRule` dataclass) | `PyKeyError` |
@@ -278,13 +278,14 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (8 tests) + `src/tagger.rs` (32 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (8 tests) + `src/tagger.rs` (42 unit tests) |
 | Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (22 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
 | CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `tests/test_csv_loader.rs` (5 tests) + `src/csv_loader.rs` (10 unit tests) |
 | Capture group extraction | Implicit (group parameter in rules) | 13 unit tests + 2 integration tests (basic, multibyte, mixed rules, error cases) |
+| Overlapped matching | Implicit in existing test suite | 10 unit tests (basic, multibyte, capture groups, conflict resolution, attributes) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
 | SpanTagger tests | Separate test file | — |
@@ -297,7 +298,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Category | Full | Partial | None |
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
-| RegexTagger parameters (11) | 6 | 2 | 3 |
+| RegexTagger parameters (11) | 7 | 1 | 3 |
 | SubstringTagger parameters (12) | 9 | 1 | 2 |
 | Extraction rules (6 features) | 3 | 2 | 1 |
 | Rulesets (7 features) | 2 | 4 | 1 |
@@ -307,8 +308,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Regex library classes (4) | 0 | 0 | 4 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 115 Rust tests total (82 unit + 33 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 125 Rust tests total (92 unit + 33 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), overlapped regex matching, other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).

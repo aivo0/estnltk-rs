@@ -200,6 +200,11 @@ pub struct TaggerConfig {
     /// When `false` (default), duplicate patterns are allowed — matching
     /// EstNLTK's `AmbiguousRuleset` behavior.
     pub unique_patterns: bool,
+    /// When `true`, find overlapping matches by re-searching from
+    /// `match.start + 1` after each match.  Matches EstNLTK's
+    /// `RegexTagger(overlapped=True)` / Python `regex.finditer(overlapped=True)`.
+    /// Default `false`.
+    pub overlapped: bool,
 }
 
 /// Check if rules have inconsistent attribute sets.

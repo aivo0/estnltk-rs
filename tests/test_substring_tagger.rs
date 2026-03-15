@@ -14,6 +14,7 @@ fn default_config() -> TaggerConfig {
         pattern_attribute: None,
         ambiguous_output_layer: true,
         unique_patterns: false,
+        overlapped: false,
     }
 }
 
