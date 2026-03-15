@@ -63,10 +63,49 @@ cargo test
 cd cross_tests && pytest test_cross_impl.py -v
 ```
 
+## Performance: Rust vs Python
+
+All benchmarks verify output parity — both implementations produce identical spans.
+
+### RegexTagger (resharp DFA vs Python `regex`)
+
+| Scenario | Text | Patterns | Python (ms) | Rust (ms) | Speedup |
+|----------|------|----------|-------------|-----------|---------|
+| small | 1 KB | 3 | 0.14 | 0.07 | **1.9x** |
+| medium | 10 KB | 10 | 6.90 | 5.35 | **1.3x** |
+| large | 100 KB | 50 | 169.86 | 74.69 | **2.3x** |
+
+### SubstringTagger (Aho-Corasick vs Python `ahocorasick`)
+
+| Scenario | Text | Patterns | Python (ms) | Rust (ms) | Speedup |
+|----------|------|----------|-------------|-----------|---------|
+| small | 1 KB | 10 | 0.25 | 0.14 | **1.9x** |
+| medium | 10 KB | 50 | 5.13 | 1.40 | **3.7x** |
+| large | 100 KB | 207 | 97.47 | 27.24 | **3.6x** |
+
+### Rust-only Criterion benchmarks (10 KB text, 10 patterns)
+
+| Benchmark | Time |
+|-----------|------|
+| RegexTagger tag | 96.6 µs |
+| SubstringTagger tag | 42.3 µs |
+| KEEP_ALL strategy | 104.2 µs |
+| KEEP_MAXIMAL strategy | 107.8 µs |
+| KEEP_MINIMAL strategy | 120.3 µs |
+| lowercase=false | 99.2 µs |
+| lowercase=true | 105.6 µs |
+| keep_maximal (1000 spans) | 1.81 µs |
+| keep_minimal (1000 spans) | 13.6 µs |
+| priority_resolver (1000 spans) | 638.3 µs |
+
+**Notes:**
+- Speedup is end-to-end including PyO3 serialization overhead (Python dict construction on return). Pure Rust throughput is higher.
+- The RegexTagger speedup is modest at medium scale because resharp DFA compilation is a one-time cost amortized over matching, and the Python `regex` library is itself a C extension. The gap widens at larger scales.
+- SubstringTagger shows consistently higher speedup (3.6–3.7x) because the Rust Aho-Corasick implementation has lower per-match overhead than Python's.
+- Benchmarks run with `cargo bench` (Criterion) and `python benchmarks/rust_vs_python/bench_*.py`.
+
 ## Limitations
 
-- **No capture groups** — only `group=0` (full match). Patterns using capture groups must be restructured.
-- **No overlapped matching** — `overlapped=True` is rejected. Default `False` covers primary use cases.
 - **No decorators** — Rust produces static annotations only. Decorators can be applied Python-side on the output.
 - **Leftmost-longest semantics** — resharp uses leftmost-longest (not leftmost-first). `cat|catfish` matches "catfish" in resharp vs "cat" in Python `re`.
 - **No lazy quantifiers** — `.*?` not supported. Use character class negation or lookahead instead.
