@@ -1,12 +1,16 @@
 pub mod byte_char;
 pub mod conflict;
 pub mod csv_loader;
+#[cfg(feature = "vabamorf")]
+pub mod expander;
 pub mod string_list;
 pub mod substring_tagger;
 pub mod tagger;
 pub mod types;
 
 use std::collections::HashMap;
+#[cfg(feature = "vabamorf")]
+use std::sync::Mutex;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
@@ -258,7 +262,7 @@ struct PySubstringTagger {
 #[pymethods]
 impl PySubstringTagger {
     #[new]
-    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
+    #[pyo3(signature = (patterns, output_layer="substrings", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false, expander=None, vabamorf=None))]
     fn new(
         patterns: &Bound<'_, PyList>,
         output_layer: &str,
@@ -271,6 +275,8 @@ impl PySubstringTagger {
         pattern_attribute: Option<String>,
         ambiguous_output_layer: bool,
         unique_patterns: bool,
+        expander: Option<&str>,
+        vabamorf: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let mut rules = Vec::new();
         for item in patterns.iter() {
@@ -279,6 +285,37 @@ impl PySubstringTagger {
             })?;
             rules.push(parse_substring_pattern_dict(dict)?);
         }
+
+        // Apply expander if specified.
+        let rules = if let Some(expander_name) = expander {
+            #[cfg(feature = "vabamorf")]
+            {
+                let vm_obj = vabamorf.ok_or_else(|| {
+                    pyo3::exceptions::PyValueError::new_err(
+                        "expander requires a vabamorf parameter (RsVabamorf instance)",
+                    )
+                })?;
+                let py_vm: &Bound<'_, PyVabamorf> = vm_obj.downcast().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err(
+                        "vabamorf must be an RsVabamorf instance",
+                    )
+                })?;
+                let py_vm_ref = py_vm.borrow();
+                let mut vm = py_vm_ref.inner.lock().unwrap();
+                expander::expand_rules(rules, expander_name, &mut vm, lowercase_text)
+                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
+            }
+            #[cfg(not(feature = "vabamorf"))]
+            {
+                let _ = vabamorf;
+                let _ = expander_name;
+                return Err(pyo3::exceptions::PyValueError::new_err(
+                    "expander requires the 'vabamorf' feature (not compiled)",
+                ));
+            }
+        } else {
+            rules
+        };
 
         let strategy = ConflictStrategy::from_str(conflict_resolver)
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
@@ -321,7 +358,7 @@ impl PySubstringTagger {
 
 /// Convenience function: tag text with substring patterns and return list of span dicts.
 #[pyfunction]
-#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", ambiguous_output_layer=true))]
+#[pyo3(signature = (text, patterns, conflict_resolver="KEEP_MAXIMAL", lowercase_text=false, token_separators="", ambiguous_output_layer=true, expander=None, vabamorf=None))]
 fn rs_substring_tag(
     py: Python<'_>,
     text: &str,
@@ -330,6 +367,8 @@ fn rs_substring_tag(
     lowercase_text: bool,
     token_separators: &str,
     ambiguous_output_layer: bool,
+    expander: Option<&str>,
+    vabamorf: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<PyObject> {
     let mut rules = Vec::new();
     let mut all_attr_names = Vec::new();
@@ -345,6 +384,37 @@ fn rs_substring_tag(
         }
         rules.push(rule);
     }
+
+    // Apply expander if specified.
+    let rules = if let Some(expander_name) = expander {
+        #[cfg(feature = "vabamorf")]
+        {
+            let vm_obj = vabamorf.ok_or_else(|| {
+                pyo3::exceptions::PyValueError::new_err(
+                    "expander requires a vabamorf parameter (RsVabamorf instance)",
+                )
+            })?;
+            let py_vm: &Bound<'_, PyVabamorf> = vm_obj.downcast().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err(
+                    "vabamorf must be an RsVabamorf instance",
+                )
+            })?;
+            let py_vm_ref = py_vm.borrow();
+            let mut vm = py_vm_ref.inner.lock().unwrap();
+            expander::expand_rules(rules, expander_name, &mut vm, lowercase_text)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
+        }
+        #[cfg(not(feature = "vabamorf"))]
+        {
+            let _ = vabamorf;
+            let _ = expander_name;
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "expander requires the 'vabamorf' feature (not compiled)",
+            ));
+        }
+    } else {
+        rules
+    };
 
     let strategy = ConflictStrategy::from_str(conflict_resolver)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
@@ -533,6 +603,154 @@ fn rs_merged_string_lists_pattern(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
 }
 
+// ── Vabamorf integration (feature-gated) ─────────────────────────────────────
+
+#[cfg(feature = "vabamorf")]
+#[pyclass(name = "RsVabamorf")]
+struct PyVabamorf {
+    inner: Mutex<vabamorf_rs::Vabamorf>,
+}
+
+#[cfg(feature = "vabamorf")]
+#[pymethods]
+impl PyVabamorf {
+    #[new]
+    fn new(dct_dir: &str) -> PyResult<Self> {
+        let vm = vabamorf_rs::Vabamorf::from_dct_dir(std::path::Path::new(dct_dir))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+        Ok(Self {
+            inner: Mutex::new(vm),
+        })
+    }
+
+    /// Morphological analysis.
+    #[pyo3(signature = (words, disambiguate=true, guess=true, phonetic=false, propername=true, stem=false))]
+    fn analyze(
+        &self,
+        py: Python<'_>,
+        words: Vec<String>,
+        disambiguate: bool,
+        guess: bool,
+        phonetic: bool,
+        propername: bool,
+        stem: bool,
+    ) -> PyResult<PyObject> {
+        let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+        let mut vm = self.inner.lock().unwrap();
+        let results = vm
+            .analyze(&word_refs, disambiguate, guess, phonetic, propername, stem)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let list = PyList::empty_bound(py);
+        for word_analysis in &results {
+            let d = PyDict::new_bound(py);
+            d.set_item("word", &word_analysis.word)?;
+            let analyses = PyList::empty_bound(py);
+            for a in &word_analysis.analyses {
+                let ad = PyDict::new_bound(py);
+                ad.set_item("root", &a.root)?;
+                ad.set_item("ending", &a.ending)?;
+                ad.set_item("clitic", &a.clitic)?;
+                ad.set_item("partofspeech", &a.partofspeech)?;
+                ad.set_item("form", &a.form)?;
+                analyses.append(ad)?;
+            }
+            d.set_item("analyses", analyses)?;
+            list.append(d)?;
+        }
+        Ok(list.unbind().into())
+    }
+
+    /// Word synthesis.
+    #[pyo3(signature = (lemma, form, partofspeech="", hint="", guess=true, phonetic=false))]
+    fn synthesize(
+        &self,
+        lemma: &str,
+        form: &str,
+        partofspeech: &str,
+        hint: &str,
+        guess: bool,
+        phonetic: bool,
+    ) -> PyResult<Vec<String>> {
+        let mut vm = self.inner.lock().unwrap();
+        vm.synthesize(lemma, form, partofspeech, hint, guess, phonetic)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Spellcheck.
+    #[pyo3(signature = (words, suggest=true))]
+    fn spellcheck(&self, py: Python<'_>, words: Vec<String>, suggest: bool) -> PyResult<PyObject> {
+        let word_refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+        let mut vm = self.inner.lock().unwrap();
+        let results = vm
+            .spellcheck(&word_refs, suggest)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+
+        let list = PyList::empty_bound(py);
+        for sr in &results {
+            let d = PyDict::new_bound(py);
+            d.set_item("word", &sr.word)?;
+            d.set_item("correct", sr.correct)?;
+            let sug = PyList::empty_bound(py);
+            for s in &sr.suggestions {
+                sug.append(s)?;
+            }
+            d.set_item("suggestions", sug)?;
+            list.append(d)?;
+        }
+        Ok(list.unbind().into())
+    }
+
+    /// Generate all 28 noun case forms.
+    fn noun_forms_expander(&self, word: &str) -> PyResult<Vec<String>> {
+        let mut vm = self.inner.lock().unwrap();
+        expander::noun_forms_expander(&mut vm, word)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+    }
+
+    /// Default expander (delegates to noun_forms_expander).
+    fn default_expander(&self, word: &str) -> PyResult<Vec<String>> {
+        let mut vm = self.inner.lock().unwrap();
+        expander::default_expander(&mut vm, word)
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+    }
+}
+
+/// Standalone: generate noun case forms using an RsVabamorf instance.
+#[cfg(feature = "vabamorf")]
+#[pyfunction]
+fn rs_noun_forms_expander(vabamorf: &PyVabamorf, word: &str) -> PyResult<Vec<String>> {
+    let mut vm = vabamorf.inner.lock().unwrap();
+    expander::noun_forms_expander(&mut vm, word)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+}
+
+/// Standalone: default expander using an RsVabamorf instance.
+#[cfg(feature = "vabamorf")]
+#[pyfunction]
+fn rs_default_expander(vabamorf: &PyVabamorf, word: &str) -> PyResult<Vec<String>> {
+    let mut vm = vabamorf.inner.lock().unwrap();
+    expander::default_expander(&mut vm, word)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+}
+
+/// Standalone: syllabify a word (does not require an RsVabamorf instance).
+#[cfg(feature = "vabamorf")]
+#[pyfunction]
+fn rs_syllabify(py: Python<'_>, word: &str) -> PyResult<PyObject> {
+    let syllables = vabamorf_rs::syllabify(word)
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+    let list = PyList::empty_bound(py);
+    for s in &syllables {
+        let d = PyDict::new_bound(py);
+        d.set_item("syllable", &s.syllable)?;
+        d.set_item("quantity", s.quantity)?;
+        d.set_item("accent", s.accent)?;
+        list.append(d)?;
+    }
+    Ok(list.unbind().into())
+}
+
 /// Python module definition.
 #[pymodule]
 fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -544,5 +762,14 @@ fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rs_string_list_pattern, m)?)?;
     m.add_function(wrap_pyfunction!(rs_choice_group_pattern, m)?)?;
     m.add_function(wrap_pyfunction!(rs_merged_string_lists_pattern, m)?)?;
+
+    #[cfg(feature = "vabamorf")]
+    {
+        m.add_class::<PyVabamorf>()?;
+        m.add_function(wrap_pyfunction!(rs_noun_forms_expander, m)?)?;
+        m.add_function(wrap_pyfunction!(rs_default_expander, m)?)?;
+        m.add_function(wrap_pyfunction!(rs_syllabify, m)?)?;
+    }
+
     Ok(())
 }

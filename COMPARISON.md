@@ -37,7 +37,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
-| `expander` | `Callable[[str], List[str]]`, default `None` | — | **None** | Morphological expansion (e.g., `noun_forms_expander`) requires Vabamorf |
+| `expander` | `Callable[[str], List[str]]`, default `None` | `Option<&str>`: `"noun_forms"` or `"default"`, requires `RsVabamorf` instance | **Partial** | Built-in named expanders only, not arbitrary Python callables. Requires `vabamorf` feature |
 
 ---
 
@@ -198,13 +198,13 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 | `keep_maximal_matches` | Generator | `Vec`-returning function | **Full** |
 | `keep_minimal_matches` | Generator | `Vec`-returning function | **Full** |
 | `conflict_priority_resolver` | List-modifying function | `Vec`-returning function | **Full** |
-| `noun_forms_expander` | Generates all 28 case forms (14 cases × sg/pl) using Vabamorf | — | **None** |
+| `noun_forms_expander` | Generates all 28 case forms (14 cases × sg/pl) using Vabamorf | `expander::noun_forms_expander` + `RsVabamorf.noun_forms_expander()` + `rs_noun_forms_expander()` | **Full** | Requires `vabamorf` feature |
 | `verb_forms_expander` | Not implemented (`raise NotImplementedError`) | — | **N/A** |
-| `default_expander` | Calls `noun_forms_expander` | — | **None** |
+| `default_expander` | Calls `noun_forms_expander` | `expander::default_expander` + `RsVabamorf.default_expander()` + `rs_default_expander()` | **Full** | Requires `vabamorf` feature |
 
 **Notes:**
-- Morphological expansion (`noun_forms_expander`) depends on Vabamorf, a C++ Estonian morphological analyzer with Python bindings. Not portable to Rust without FFI.
-- The expander is used by `SubstringTagger`. The Rust `SubstringTagger` does not support expanders — patterns must be pre-expanded before passing to Rust.
+- Morphological expansion (`noun_forms_expander`, `default_expander`) is fully ported via the `vabamorf` Cargo feature, which provides FFI bindings to the C++ Vabamorf library through `vabamorf-sys` + `vabamorf-rs`.
+- The Rust `SubstringTagger` supports `expander` and `vabamorf` parameters. Expansion happens at construction time before building the Aho-Corasick automaton. Only built-in named expanders (`"noun_forms"`, `"default"`) are supported, not arbitrary Python callables.
 
 ---
 
@@ -318,19 +318,19 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 7 | 2 | 2 |
-| SubstringTagger parameters (12) | 9 | 1 | 2 |
+| SubstringTagger parameters (12) | 9 | 2 | 1 |
 | Extraction rules (6 features) | 3 | 2 | 1 |
 | Rulesets (7 features) | 2 | 4 | 1 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 1 | 2 (+1 N/A) |
-| Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
+| Helper functions (6) | 5 | 0 | 0 (+1 N/A) |
 | Regex library classes (4) | 0 | 2 | 2 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 164 Rust tests total (131 unit + 33 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). Morphological expansion: `noun_forms_expander` and `default_expander` via Vabamorf FFI bindings (feature-gated), integrated into `SubstringTagger` via `expander`/`vabamorf` parameters. Verified by 56 cross-implementation tests (23 regex + 14 substring + 19 expander) including Estonian multi-byte text. 177 Rust tests total (138 unit + 39 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library test infrastructure (`RegexElement`, `RegexPattern`), morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library test infrastructure (`RegexElement`, `RegexPattern`).
 
-**By design, not ported:** Features tied to Python runtime (decorators, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
+**By design, not ported:** Features tied to Python runtime (decorators, arbitrary attribute types, callable conflict resolvers) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration). Morphological expanders are ported as built-in named expanders rather than arbitrary callables.
 
 **Partial equivalents:** `match_attribute` stores the matched text `String` instead of Python's `re.Match` object — opt-in via `match_attribute` parameter (default `None`), covering the most common use case (inspecting matched text) without Python-specific match objects.
