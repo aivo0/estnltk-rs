@@ -192,3 +192,75 @@ fn test_csv_nonexistent_file() {
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("Cannot open"));
 }
+
+#[test]
+fn test_csv_regex_type_column_with_tagger() {
+    // Regex-typed column stores validated pattern strings as attributes
+    let csv = "pattern,filter_re,label\nstring,regex,string\n[0-9]+,\\d{3},number\n[a-z]+,[A-Z],word\n";
+    let f = write_temp_csv(csv);
+    let csv_rules = load_rules_from_csv(f.path(), &CsvLoadConfig::default()).unwrap();
+
+    assert_eq!(csv_rules.len(), 2);
+    // Regex column values are stored as validated strings
+    assert_eq!(
+        csv_rules[0].attributes.get("filter_re"),
+        Some(&AnnotationValue::Str("\\d{3}".to_string()))
+    );
+    assert_eq!(
+        csv_rules[1].attributes.get("filter_re"),
+        Some(&AnnotationValue::Str("[A-Z]".to_string()))
+    );
+
+    // Build a tagger and verify the regex attribute comes through in output
+    let mut rules = Vec::new();
+    let mut all_attrs = Vec::new();
+    for cr in &csv_rules {
+        let rule = make_rule(&cr.pattern, cr.attributes.clone(), cr.group, cr.priority).unwrap();
+        for k in rule.attributes.keys() {
+            if !all_attrs.contains(k) {
+                all_attrs.push(k.clone());
+            }
+        }
+        rules.push(rule);
+    }
+
+    let config = TaggerConfig {
+        output_layer: "regexes".to_string(),
+        output_attributes: all_attrs,
+        conflict_strategy: ConflictStrategy::KeepAll,
+        lowercase_text: false,
+        group_attribute: None,
+        priority_attribute: None,
+        pattern_attribute: None,
+        ambiguous_output_layer: true,
+        unique_patterns: false,
+        overlapped: false,
+        match_attribute: None,
+    };
+
+    let tagger = RegexTagger::new(rules, config).unwrap();
+    let result = tagger.tag("abc 123");
+
+    assert_eq!(result.spans.len(), 2);
+    // Verify that the regex-typed attribute is carried through to annotations
+    let has_filter_re = result
+        .spans
+        .iter()
+        .any(|s| s.annotations[0].0.contains_key("filter_re"));
+    assert!(has_filter_re, "filter_re attribute should be present in annotations");
+}
+
+#[test]
+fn test_csv_regex_type_invalid_pattern_rejected() {
+    // Invalid regex in a regex-typed column should fail at load time
+    let csv = "pattern,filter_re\nstring,regex\nhello,[unclosed(\n";
+    let f = write_temp_csv(csv);
+    let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("invalid regex pattern"),
+        "Should report invalid regex: {}",
+        err
+    );
+}

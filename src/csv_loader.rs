@@ -13,7 +13,7 @@ pub struct CsvRule {
 }
 
 /// Supported column types for CSV loading.
-/// Maps to EstNLTK's `CONVERSION_MAP` (minus `callable`, `expression`, `regex`
+/// Maps to EstNLTK's `CONVERSION_MAP` (minus `callable` and `expression`
 /// which are Python-specific).
 #[derive(Debug, Clone, Copy)]
 enum ColumnType {
@@ -21,6 +21,10 @@ enum ColumnType {
     Int,
     Float,
     Bool,
+    /// Validates the cell value as a compilable regex pattern (via resharp).
+    /// Stores the pattern string as `AnnotationValue::Str` after validation.
+    /// Maps to EstNLTK's `CONVERSION_MAP["regex"]` which compiles to `regex.Regex`.
+    Regex,
 }
 
 impl ColumnType {
@@ -30,8 +34,9 @@ impl ColumnType {
             "int" => Ok(ColumnType::Int),
             "float" => Ok(ColumnType::Float),
             "bool" => Ok(ColumnType::Bool),
+            "regex" => Ok(ColumnType::Regex),
             other => Err(format!(
-                "Unknown data type '{}'. Supported types: string, int, float, bool",
+                "Unknown data type '{}'. Supported types: string, int, float, bool, regex",
                 other
             )),
         }
@@ -66,6 +71,16 @@ impl ColumnType {
                     line, value, col
                 )),
             },
+            ColumnType::Regex => {
+                // Validate the pattern compiles with resharp, then store as string.
+                resharp::Regex::new(value).map_err(|e| {
+                    format!(
+                        "Line {}: invalid regex pattern '{}' in column '{}': {}",
+                        line, value, col, e
+                    )
+                })?;
+                Ok(AnnotationValue::Str(value.to_string()))
+            }
         }
     }
 }
@@ -469,5 +484,66 @@ mod tests {
         let result = load_rules_from_csv(f.path(), &config);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("coincide"));
+    }
+
+    #[test]
+    fn test_csv_regex_type_valid() {
+        let csv = "pattern,filter_re\nstring,regex\n[0-9]+,[a-z]+\nhello,\\d{3}\n";
+        let f = write_temp_csv(csv);
+        let rules = load_rules_from_csv(f.path(), &CsvLoadConfig::default()).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(
+            rules[0].attributes.get("filter_re"),
+            Some(&AnnotationValue::Str("[a-z]+".to_string()))
+        );
+        assert_eq!(
+            rules[1].attributes.get("filter_re"),
+            Some(&AnnotationValue::Str("\\d{3}".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_csv_regex_type_invalid() {
+        let csv = "pattern,filter_re\nstring,regex\nhello,[invalid(\n";
+        let f = write_temp_csv(csv);
+        let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("invalid regex pattern"), "Unexpected error: {}", err);
+        assert!(err.contains("filter_re"), "Error should mention column name: {}", err);
+        assert!(err.contains("Line 3"), "Error should mention line number: {}", err);
+    }
+
+    #[test]
+    fn test_csv_regex_type_with_other_types() {
+        let csv =
+            "pattern,filter_re,count,active\nstring,regex,int,bool\nhello,[a-z]+,5,true\nworld,\\d+,10,false\n";
+        let f = write_temp_csv(csv);
+        let rules = load_rules_from_csv(f.path(), &CsvLoadConfig::default()).unwrap();
+        assert_eq!(rules.len(), 2);
+        assert_eq!(
+            rules[0].attributes.get("filter_re"),
+            Some(&AnnotationValue::Str("[a-z]+".to_string()))
+        );
+        assert_eq!(
+            rules[0].attributes.get("count"),
+            Some(&AnnotationValue::Int(5))
+        );
+        assert_eq!(
+            rules[0].attributes.get("active"),
+            Some(&AnnotationValue::Bool(true))
+        );
+    }
+
+    #[test]
+    fn test_csv_regex_type_estonian_pattern() {
+        let csv = "pattern,name_re\nstring,regex\ntere,[äöüõ]+\n";
+        let f = write_temp_csv(csv);
+        let rules = load_rules_from_csv(f.path(), &CsvLoadConfig::default()).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].attributes.get("name_re"),
+            Some(&AnnotationValue::Str("[äöüõ]+".to_string()))
+        );
     }
 }

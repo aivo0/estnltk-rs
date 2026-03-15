@@ -543,8 +543,12 @@ fn csv_rules_to_pylist(py: Python<'_>, rules: &[CsvRule]) -> PyResult<PyObject> 
 ///
 /// CSV format:
 /// - Row 1: column names
-/// - Row 2: column types (string, int, float, bool)
+/// - Row 2: column types (string, int, float, bool, regex)
 /// - Row 3+: data rows
+///
+/// The `regex` type validates the cell value as a compilable regex pattern
+/// (using resharp) at load time and stores it as a string. Invalid patterns
+/// produce an error with the line number, column name, and parse error.
 ///
 /// Returns a list of pattern dicts suitable for passing to RsRegexTagger or RsSubstringTagger.
 #[pyfunction]
