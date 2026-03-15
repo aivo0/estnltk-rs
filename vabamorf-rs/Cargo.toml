@@ -1,0 +1,9 @@
+[package]
+name = "vabamorf-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Safe Rust bindings to the Vabamorf Estonian morphological analyzer"
+license = "GPL-2.0 OR Apache-2.0"
+
+[dependencies]
+vabamorf-sys = { path = "../vabamorf-sys" }

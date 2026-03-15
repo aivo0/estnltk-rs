@@ -1,4 +1,6 @@
 /target
+vabamorf-sys/target
+vabamorf-rs/target
 __pycache__/
 *.pyc
 *.so
