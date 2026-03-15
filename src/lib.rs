@@ -3,6 +3,8 @@ pub mod conflict;
 pub mod csv_loader;
 #[cfg(feature = "vabamorf")]
 pub mod expander;
+pub mod phrase_tagger;
+pub mod span_tagger;
 pub mod string_list;
 pub mod substring_tagger;
 pub mod tagger;
@@ -16,6 +18,8 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
 use csv_loader::{ColumnRef, CsvLoadConfig, CsvRule};
+use phrase_tagger::{make_phrase_rule, PhraseTagger, PhraseTaggerConfig};
+use span_tagger::{make_span_rule, SpanTagger, SpanTaggerConfig};
 use substring_tagger::{make_substring_rule, SubstringTagger};
 use tagger::{make_rule, RegexTagger};
 use types::*;
@@ -508,6 +512,499 @@ fn rs_substring_tag(
     Ok(list.unbind().into())
 }
 
+/// Parse a Python pattern dict into a SpanRule.
+fn parse_span_pattern_dict(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<span_tagger::SpanRule> {
+    let pattern: String = dict
+        .get_item("pattern")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'pattern' key required"))?
+        .extract()?;
+
+    let group: u32 = dict
+        .get_item("group")?
+        .map(|v| v.extract())
+        .unwrap_or(Ok(0))?;
+
+    let priority: i32 = dict
+        .get_item("priority")?
+        .map(|v| v.extract())
+        .unwrap_or(Ok(0))?;
+
+    let mut attributes = HashMap::new();
+    if let Some(attrs_obj) = dict.get_item("attributes")? {
+        if let Ok(attrs_dict) = attrs_obj.downcast::<PyDict>() {
+            for (k, v) in attrs_dict.iter() {
+                let key: String = k.extract()?;
+                let val = AnnotationValue::from_pyobject(&v)?;
+                attributes.insert(key, val);
+            }
+        }
+    }
+
+    Ok(make_span_rule(&pattern, attributes, group, priority))
+}
+
+/// Python-exposed SpanTagger class.
+///
+/// Matches attribute values from an input layer against a ruleset of exact
+/// string patterns.  Takes a layer dict (output of `RsRegexTagger.tag()` or
+/// `RsSubstringTagger.tag()`) as input.
+#[pyclass(name = "RsSpanTagger")]
+struct PySpanTagger {
+    inner: SpanTagger,
+}
+
+#[pymethods]
+impl PySpanTagger {
+    #[new]
+    #[pyo3(signature = (patterns, input_attribute, output_layer="spans", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", ignore_case=false, group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
+    fn new(
+        patterns: &Bound<'_, PyList>,
+        input_attribute: &str,
+        output_layer: &str,
+        output_attributes: Option<Vec<String>>,
+        conflict_resolver: &str,
+        ignore_case: bool,
+        group_attribute: Option<String>,
+        priority_attribute: Option<String>,
+        pattern_attribute: Option<String>,
+        ambiguous_output_layer: bool,
+        unique_patterns: bool,
+    ) -> PyResult<Self> {
+        let mut rules = Vec::new();
+        for item in patterns.iter() {
+            let dict = item.downcast::<PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Each pattern must be a dict")
+            })?;
+            rules.push(parse_span_pattern_dict(dict)?);
+        }
+
+        let strategy = ConflictStrategy::from_str(conflict_resolver)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+        let config = SpanTaggerConfig {
+            output_layer: output_layer.to_string(),
+            input_attribute: input_attribute.to_string(),
+            output_attributes: output_attributes.unwrap_or_default(),
+            conflict_strategy: strategy,
+            ignore_case,
+            group_attribute,
+            priority_attribute,
+            pattern_attribute,
+            ambiguous_output_layer,
+            unique_patterns,
+        };
+
+        let tagger = SpanTagger::new(rules, config)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+        Ok(Self { inner: tagger })
+    }
+
+    /// Tag an input layer dict and return a new layer dict.
+    ///
+    /// The input must be a dict with the same format as returned by
+    /// `RsRegexTagger.tag()` or `RsSubstringTagger.tag()`:
+    /// `{"name": ..., "attributes": [...], "ambiguous": ..., "spans": [...]}`
+    fn tag(&self, py: Python<'_>, input_layer: &Bound<'_, PyDict>) -> PyResult<PyObject> {
+        let input = parse_tag_result(input_layer)?;
+        let result = self.inner.tag(&input);
+        result.to_pydict(py)
+    }
+
+    /// Check if rules have inconsistent attribute sets.
+    #[getter]
+    fn missing_attributes(&self) -> bool {
+        self.inner.missing_attributes()
+    }
+
+    /// Return a dict mapping pattern strings to lists of rule dicts.
+    #[getter]
+    fn rule_map(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let result = PyDict::new_bound(py);
+        for (pattern, rule_indices) in self.inner.rule_map() {
+            let rules_list = PyList::empty_bound(py);
+            for &idx in rule_indices {
+                let rule = &self.inner.rules[idx];
+                let rule_dict = PyDict::new_bound(py);
+                rule_dict.set_item("pattern", &rule.pattern_str)?;
+                rule_dict.set_item("group", rule.group)?;
+                rule_dict.set_item("priority", rule.priority)?;
+                let attrs = PyDict::new_bound(py);
+                for (k, v) in &rule.attributes {
+                    attrs.set_item(k, v.to_pyobject(py))?;
+                }
+                rule_dict.set_item("attributes", attrs)?;
+                rules_list.append(rule_dict)?;
+            }
+            result.set_item(pattern, rules_list)?;
+        }
+        Ok(result.unbind().into())
+    }
+}
+
+/// Parse a Python layer dict (from `tag()` output) into a `TagResult`.
+fn parse_tag_result(dict: &Bound<'_, PyDict>) -> PyResult<TagResult> {
+    let name: String = dict
+        .get_item("name")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'name' key required"))?
+        .extract()?;
+
+    let attributes: Vec<String> = dict
+        .get_item("attributes")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'attributes' key required"))?
+        .extract()?;
+
+    let ambiguous: bool = dict
+        .get_item("ambiguous")?
+        .map(|v| v.extract())
+        .unwrap_or(Ok(true))?;
+
+    let spans_obj = dict
+        .get_item("spans")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'spans' key required"))?;
+    let spans_list = spans_obj.downcast::<PyList>().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err("'spans' must be a list")
+    })?;
+
+    let mut spans = Vec::new();
+    for span_item in spans_list.iter() {
+        let span_dict = span_item.downcast::<PyDict>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Each span must be a dict")
+        })?;
+
+        let base_span: (usize, usize) = span_dict
+            .get_item("base_span")?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'base_span' key required"))?
+            .extract()?;
+
+        let ann_obj = span_dict
+            .get_item("annotations")?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'annotations' key required"))?;
+        let ann_list = ann_obj.downcast::<PyList>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("'annotations' must be a list")
+        })?;
+
+        let mut annotations = Vec::new();
+        for ann_item in ann_list.iter() {
+            let ann_dict = ann_item.downcast::<PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Each annotation must be a dict")
+            })?;
+            let mut annotation = Annotation::new();
+            for (k, v) in ann_dict.iter() {
+                let key: String = k.extract()?;
+                let val = AnnotationValue::from_pyobject(&v)?;
+                annotation.0.insert(key, val);
+            }
+            annotations.push(annotation);
+        }
+
+        spans.push(TaggedSpan {
+            span: MatchSpan::new(base_span.0, base_span.1),
+            annotations,
+        });
+    }
+
+    Ok(TagResult {
+        name,
+        attributes,
+        ambiguous,
+        spans,
+    })
+}
+
+/// Convenience function: tag an input layer with span patterns.
+#[pyfunction]
+#[pyo3(signature = (input_layer, patterns, input_attribute, conflict_resolver="KEEP_MAXIMAL", ignore_case=false, ambiguous_output_layer=true))]
+fn rs_span_tag(
+    py: Python<'_>,
+    input_layer: &Bound<'_, PyDict>,
+    patterns: &Bound<'_, PyList>,
+    input_attribute: &str,
+    conflict_resolver: &str,
+    ignore_case: bool,
+    ambiguous_output_layer: bool,
+) -> PyResult<PyObject> {
+    let mut rules = Vec::new();
+    let mut all_attr_names = Vec::new();
+    for item in patterns.iter() {
+        let dict = item.downcast::<PyDict>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Each pattern must be a dict")
+        })?;
+        let rule = parse_span_pattern_dict(dict)?;
+        for k in rule.attributes.keys() {
+            if !all_attr_names.contains(k) {
+                all_attr_names.push(k.clone());
+            }
+        }
+        rules.push(rule);
+    }
+
+    let strategy = ConflictStrategy::from_str(conflict_resolver)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    let config = SpanTaggerConfig {
+        output_layer: "spans".to_string(),
+        input_attribute: input_attribute.to_string(),
+        output_attributes: all_attr_names,
+        conflict_strategy: strategy,
+        ignore_case,
+        group_attribute: None,
+        priority_attribute: None,
+        pattern_attribute: None,
+        ambiguous_output_layer,
+        unique_patterns: false,
+    };
+
+    let tagger = SpanTagger::new(rules, config)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    let input = parse_tag_result(input_layer)?;
+    let result = tagger.tag(&input);
+
+    let list = PyList::empty_bound(py);
+    for tagged in &result.spans {
+        let d = PyDict::new_bound(py);
+        d.set_item("base_span", (tagged.span.start, tagged.span.end))?;
+        let anns = PyList::empty_bound(py);
+        for ann in &tagged.annotations {
+            anns.append(ann.to_pydict(py)?)?;
+        }
+        d.set_item("annotations", anns)?;
+        list.append(d)?;
+    }
+    Ok(list.unbind().into())
+}
+
+/// Parse a Python pattern dict into a PhraseRule.
+///
+/// The pattern is a list/tuple of strings (the phrase), e.g., `["euroopa", "liit"]`.
+fn parse_phrase_pattern_dict(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<phrase_tagger::PhraseRule> {
+    let pattern_obj = dict
+        .get_item("pattern")?
+        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'pattern' key required"))?;
+
+    // Extract pattern as Vec<String> from list or tuple.
+    let pattern: Vec<String> = pattern_obj.extract().map_err(|_| {
+        pyo3::exceptions::PyTypeError::new_err(
+            "'pattern' must be a list or tuple of strings for PhraseTagger",
+        )
+    })?;
+
+    let group: u32 = dict
+        .get_item("group")?
+        .map(|v| v.extract())
+        .unwrap_or(Ok(0))?;
+
+    let priority: i32 = dict
+        .get_item("priority")?
+        .map(|v| v.extract())
+        .unwrap_or(Ok(0))?;
+
+    let mut attributes = HashMap::new();
+    if let Some(attrs_obj) = dict.get_item("attributes")? {
+        if let Ok(attrs_dict) = attrs_obj.downcast::<PyDict>() {
+            for (k, v) in attrs_dict.iter() {
+                let key: String = k.extract()?;
+                let val = AnnotationValue::from_pyobject(&v)?;
+                attributes.insert(key, val);
+            }
+        }
+    }
+
+    Ok(make_phrase_rule(pattern, attributes, group, priority))
+}
+
+/// Python-exposed PhraseTagger class.
+///
+/// Matches sequential attribute values (phrase tuples) from an input layer
+/// against a ruleset of phrase patterns.  Produces an enveloping layer where
+/// each output span wraps multiple input spans.
+///
+/// Takes a layer dict (output of `RsRegexTagger.tag()`, `RsSubstringTagger.tag()`,
+/// `RsSpanTagger.tag()`, or another tagger) as input.
+#[pyclass(name = "RsPhraseTagger")]
+struct PyPhraseTagger {
+    inner: PhraseTagger,
+}
+
+#[pymethods]
+impl PyPhraseTagger {
+    #[new]
+    #[pyo3(signature = (patterns, input_attribute, output_layer="phrases", output_attributes=None, conflict_resolver="KEEP_MAXIMAL", ignore_case=false, phrase_attribute="phrase", group_attribute=None, priority_attribute=None, pattern_attribute=None, ambiguous_output_layer=true, unique_patterns=false))]
+    fn new(
+        patterns: &Bound<'_, PyList>,
+        input_attribute: &str,
+        output_layer: &str,
+        output_attributes: Option<Vec<String>>,
+        conflict_resolver: &str,
+        ignore_case: bool,
+        phrase_attribute: Option<&str>,
+        group_attribute: Option<String>,
+        priority_attribute: Option<String>,
+        pattern_attribute: Option<String>,
+        ambiguous_output_layer: bool,
+        unique_patterns: bool,
+    ) -> PyResult<Self> {
+        let mut rules = Vec::new();
+        for item in patterns.iter() {
+            let dict = item.downcast::<PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Each pattern must be a dict")
+            })?;
+            rules.push(parse_phrase_pattern_dict(dict)?);
+        }
+
+        let strategy = ConflictStrategy::from_str(conflict_resolver)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+        let config = PhraseTaggerConfig {
+            output_layer: output_layer.to_string(),
+            input_attribute: input_attribute.to_string(),
+            output_attributes: output_attributes.unwrap_or_default(),
+            conflict_strategy: strategy,
+            ignore_case,
+            phrase_attribute: phrase_attribute.map(|s| s.to_string()),
+            group_attribute,
+            priority_attribute,
+            pattern_attribute,
+            ambiguous_output_layer,
+            unique_patterns,
+        };
+
+        let tagger = PhraseTagger::new(rules, config)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+        Ok(Self { inner: tagger })
+    }
+
+    /// Tag an input layer dict and return a new enveloping layer dict.
+    ///
+    /// The input must be a dict with the same format as returned by
+    /// `RsRegexTagger.tag()`, `RsSubstringTagger.tag()`, or `RsSpanTagger.tag()`:
+    /// `{"name": ..., "attributes": [...], "ambiguous": ..., "spans": [...]}`
+    fn tag(&self, py: Python<'_>, input_layer: &Bound<'_, PyDict>) -> PyResult<PyObject> {
+        let input = parse_tag_result(input_layer)?;
+        let result = self.inner.tag(&input);
+        result.to_pydict(py)
+    }
+
+    /// Check if rules have inconsistent attribute sets.
+    #[getter]
+    fn missing_attributes(&self) -> bool {
+        self.inner.missing_attributes()
+    }
+
+    /// Return a dict mapping phrase pattern tuples to lists of rule dicts.
+    #[getter]
+    fn rule_map(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let result = PyDict::new_bound(py);
+        for (pattern, rule_indices) in self.inner.rule_map() {
+            // Convert pattern Vec<String> to Python tuple.
+            let py_pattern = pyo3::types::PyTuple::new_bound(
+                py,
+                pattern.iter().map(|s| s.to_object(py)),
+            );
+            let rules_list = PyList::empty_bound(py);
+            for &idx in rule_indices {
+                let rule = &self.inner.rules[idx];
+                let rule_dict = PyDict::new_bound(py);
+                let py_rule_pattern = pyo3::types::PyTuple::new_bound(
+                    py,
+                    rule.pattern.iter().map(|s| s.to_object(py)),
+                );
+                rule_dict.set_item("pattern", py_rule_pattern)?;
+                rule_dict.set_item("group", rule.group)?;
+                rule_dict.set_item("priority", rule.priority)?;
+                let attrs = PyDict::new_bound(py);
+                for (k, v) in &rule.attributes {
+                    attrs.set_item(k, v.to_pyobject(py))?;
+                }
+                rule_dict.set_item("attributes", attrs)?;
+                rules_list.append(rule_dict)?;
+            }
+            result.set_item(py_pattern, rules_list)?;
+        }
+        Ok(result.unbind().into())
+    }
+}
+
+/// Convenience function: tag an input layer with phrase patterns.
+#[pyfunction]
+#[pyo3(signature = (input_layer, patterns, input_attribute, conflict_resolver="KEEP_MAXIMAL", ignore_case=false, ambiguous_output_layer=true, phrase_attribute="phrase"))]
+fn rs_phrase_tag(
+    py: Python<'_>,
+    input_layer: &Bound<'_, PyDict>,
+    patterns: &Bound<'_, PyList>,
+    input_attribute: &str,
+    conflict_resolver: &str,
+    ignore_case: bool,
+    ambiguous_output_layer: bool,
+    phrase_attribute: Option<&str>,
+) -> PyResult<PyObject> {
+    let mut rules = Vec::new();
+    let mut all_attr_names = Vec::new();
+    for item in patterns.iter() {
+        let dict = item.downcast::<PyDict>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("Each pattern must be a dict")
+        })?;
+        let rule = parse_phrase_pattern_dict(dict)?;
+        for k in rule.attributes.keys() {
+            if !all_attr_names.contains(k) {
+                all_attr_names.push(k.clone());
+            }
+        }
+        rules.push(rule);
+    }
+
+    let strategy = ConflictStrategy::from_str(conflict_resolver)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    let config = PhraseTaggerConfig {
+        output_layer: "phrases".to_string(),
+        input_attribute: input_attribute.to_string(),
+        output_attributes: all_attr_names,
+        conflict_strategy: strategy,
+        ignore_case,
+        phrase_attribute: phrase_attribute.map(|s| s.to_string()),
+        group_attribute: None,
+        priority_attribute: None,
+        pattern_attribute: None,
+        ambiguous_output_layer,
+        unique_patterns: false,
+    };
+
+    let tagger = PhraseTagger::new(rules, config)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+
+    let input = parse_tag_result(input_layer)?;
+    let result = tagger.tag(&input);
+
+    let list = PyList::empty_bound(py);
+    for tagged in &result.spans {
+        let d = PyDict::new_bound(py);
+
+        // base_span: tuple of (start, end) tuples
+        let base_span_parts: Vec<pyo3::Py<pyo3::types::PyTuple>> = tagged
+            .spans
+            .iter()
+            .map(|s| pyo3::types::PyTuple::new_bound(py, &[s.start, s.end]).unbind())
+            .collect();
+        let py_base_span = pyo3::types::PyTuple::new_bound(py, &base_span_parts);
+        d.set_item("base_span", py_base_span)?;
+
+        let anns = PyList::empty_bound(py);
+        for ann in &tagged.annotations {
+            anns.append(ann.to_pydict(py)?)?;
+        }
+        d.set_item("annotations", anns)?;
+        list.append(d)?;
+    }
+    Ok(list.unbind().into())
+}
+
 /// Helper: resolve a Python column reference (str or int) to ColumnRef.
 fn py_to_column_ref(obj: &Bound<'_, PyAny>) -> PyResult<ColumnRef> {
     if let Ok(i) = obj.extract::<usize>() {
@@ -850,8 +1347,12 @@ fn rs_syllabify(py: Python<'_>, word: &str) -> PyResult<PyObject> {
 fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRegexTagger>()?;
     m.add_class::<PySubstringTagger>()?;
+    m.add_class::<PySpanTagger>()?;
+    m.add_class::<PyPhraseTagger>()?;
     m.add_function(wrap_pyfunction!(rs_regex_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_substring_tag, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_span_tag, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_phrase_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_load_rules_csv, m)?)?;
     m.add_function(wrap_pyfunction!(rs_string_list_pattern, m)?)?;
     m.add_function(wrap_pyfunction!(rs_choice_group_pattern, m)?)?;

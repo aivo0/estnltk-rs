@@ -1,5 +1,5 @@
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
+use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::{HashMap, HashSet};
 
 /// Character-level span (not byte-level).
@@ -29,6 +29,10 @@ pub enum AnnotationValue {
     Float(f64),
     Bool(bool),
     Null,
+    /// A list/tuple of annotation values — used by PhraseTagger to store
+    /// phrase tuples (e.g., `("euroopa", "liit")`).  Serializes to a Python
+    /// **tuple** to match EstNLTK's convention.
+    List(Vec<AnnotationValue>),
 }
 
 impl AnnotationValue {
@@ -39,6 +43,11 @@ impl AnnotationValue {
             AnnotationValue::Float(f) => f.to_object(py),
             AnnotationValue::Bool(b) => b.to_object(py),
             AnnotationValue::Null => py.None(),
+            AnnotationValue::List(items) => {
+                let py_items: Vec<PyObject> =
+                    items.iter().map(|v| v.to_pyobject(py)).collect();
+                PyTuple::new_bound(py, &py_items).to_object(py)
+            }
         }
     }
 
@@ -58,8 +67,23 @@ impl AnnotationValue {
         if let Ok(s) = obj.extract::<String>() {
             return Ok(AnnotationValue::Str(s));
         }
+        // Try list/tuple → AnnotationValue::List
+        if let Ok(seq) = obj.downcast::<PyList>() {
+            let mut items = Vec::new();
+            for item in seq.iter() {
+                items.push(AnnotationValue::from_pyobject(&item)?);
+            }
+            return Ok(AnnotationValue::List(items));
+        }
+        if let Ok(seq) = obj.downcast::<PyTuple>() {
+            let mut items = Vec::new();
+            for item in seq.iter() {
+                items.push(AnnotationValue::from_pyobject(&item)?);
+            }
+            return Ok(AnnotationValue::List(items));
+        }
         Err(pyo3::exceptions::PyTypeError::new_err(
-            "Unsupported annotation value type; expected str, int, float, bool, or None",
+            "Unsupported annotation value type; expected str, int, float, bool, None, list, or tuple",
         ))
     }
 }
@@ -263,5 +287,92 @@ pub fn normalize_annotation(annotation: &mut Annotation, output_attributes: &[St
         if !annotation.0.contains_key(attr_name) {
             annotation.0.insert(attr_name.clone(), AnnotationValue::Null);
         }
+    }
+}
+
+/// Check for duplicate phrase patterns (tuples of strings).
+///
+/// Returns `Err` with a message listing the first duplicate found, or `Ok(())` if all unique.
+/// Used when `PhraseTaggerConfig.unique_patterns` is `true`.
+pub fn check_unique_phrase_patterns(patterns: &[&[String]], lowercase: bool) -> Result<(), String> {
+    let mut seen: HashSet<Vec<String>> = HashSet::new();
+    for pat in patterns {
+        let key: Vec<String> = if lowercase {
+            pat.iter().map(|s| s.to_lowercase()).collect()
+        } else {
+            pat.to_vec()
+        };
+        if !seen.insert(key.clone()) {
+            return Err(format!(
+                "Duplicate phrase pattern '{:?}' not allowed when unique_patterns=true. \
+                 Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
+                key
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// An enveloping tagged span — wraps multiple elementary spans.
+/// Maps to EstNLTK's `EnvelopingSpan` (base_span is a tuple of ElementaryBaseSpans).
+#[derive(Debug, Clone)]
+pub struct EnvelopingTaggedSpan {
+    /// The constituent elementary spans.
+    pub spans: Vec<MatchSpan>,
+    /// Bounding span: (first.start, last.end) — used for conflict resolution.
+    pub bounding_span: MatchSpan,
+    /// Annotations attached to this enveloping span.
+    pub annotations: Vec<Annotation>,
+}
+
+/// The result of phrase tagging — maps to an EstNLTK enveloping `Layer` dict.
+#[derive(Debug, Clone)]
+pub struct PhraseTagResult {
+    pub name: String,
+    pub attributes: Vec<String>,
+    pub ambiguous: bool,
+    pub spans: Vec<EnvelopingTaggedSpan>,
+}
+
+impl PhraseTagResult {
+    /// Convert to Python dict matching EstNLTK's enveloping layer dict format.
+    ///
+    /// `base_span` is a tuple of `(start, end)` tuples, e.g., `((13, 20), (21, 28))`.
+    pub fn to_pydict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let dict = PyDict::new_bound(py);
+        dict.set_item("name", &self.name)?;
+        let attr_strs: Vec<&str> = self.attributes.iter().map(|s| s.as_str()).collect();
+        let attrs = PyList::new_bound(py, &attr_strs);
+        dict.set_item("attributes", attrs)?;
+        dict.set_item("ambiguous", self.ambiguous)?;
+
+        let spans_list = PyList::empty_bound(py);
+        for tagged in &self.spans {
+            let span_dict = PyDict::new_bound(py);
+
+            // base_span: tuple of (start, end) tuples
+            let base_span_parts: Vec<(usize, usize)> = tagged
+                .spans
+                .iter()
+                .map(|s| (s.start, s.end))
+                .collect();
+            let py_base_span = PyTuple::new_bound(
+                py,
+                base_span_parts
+                    .iter()
+                    .map(|&(s, e)| PyTuple::new_bound(py, &[s, e]).to_object(py)),
+            );
+            span_dict.set_item("base_span", py_base_span)?;
+
+            let ann_list = PyList::empty_bound(py);
+            for ann in &tagged.annotations {
+                ann_list.append(ann.to_pydict(py)?)?;
+            }
+            span_dict.set_item("annotations", ann_list)?;
+            spans_list.append(span_dict)?;
+        }
+        dict.set_item("spans", spans_list)?;
+
+        Ok(dict.unbind().into())
     }
 }

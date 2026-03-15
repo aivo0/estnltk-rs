@@ -12,13 +12,14 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 |--------|---------|------------|----------|
 | RegexTagger | `regex` library, supports capture groups, overlapping | `resharp` DFA engine + `regex` crate two-pass capture group extraction | **Partial** |
 | SubstringTagger | Aho-Corasick automaton for multi-string matching | `aho-corasick` automaton, token separators, static rules | **Partial** |
-| SpanTagger | Matches input layer attribute values against ruleset | — | **None** |
-| PhraseTagger | Matches sequential attribute values (phrase tuples), enveloping layer | — | **None** |
+| SpanTagger | Matches input layer attribute values against ruleset | `RsSpanTagger`: exact string matching of annotation attribute values against ruleset, takes `TagResult` (output of any tagger) as input | **Partial** |
+| PhraseTagger | Matches sequential attribute values (phrase tuples), enveloping layer | `RsPhraseTagger`: sequential attribute value matching across consecutive spans, enveloping output with tuple-of-tuples `base_span` | **Partial** |
 
 **Notes:**
-- RegexTagger and SubstringTagger are ported. The other two operate on existing layers rather than raw text, so they have different input requirements.
+- RegexTagger, SubstringTagger, SpanTagger, and PhraseTagger are all ported with static rule support.
 - SubstringTagger is ported with static rules, token separators, and all conflict strategies. Decorators and expander are not ported (Python-specific).
-- SpanTagger and PhraseTagger depend on EstNLTK's layer/text infrastructure (`input_layer`, `input_attribute`), which has no Rust equivalent.
+- SpanTagger is ported as `RsSpanTagger`, which takes a `TagResult` dict (output of `RsRegexTagger.tag()`, `RsSubstringTagger.tag()`, or another `RsSpanTagger.tag()`) as input instead of EstNLTK's `Layer` object. Supports all static rule features: exact string matching of annotation attribute values, `ignore_case`, all conflict strategies, `group_attribute`/`priority_attribute`/`pattern_attribute`, `ambiguous_output_layer`, `unique_patterns`, and `missing_attributes` validation. Decorators (global and dynamic) are not ported (Python-specific).
+- PhraseTagger is ported as `RsPhraseTagger`, which takes a `TagResult` dict as input. Matches sequential attribute values (phrase tuples) across consecutive spans, producing an enveloping output where `base_span` is a tuple of `(start, end)` tuples. Supports all static rule features: `ignore_case`, all six conflict strategies (using bounding spans), `phrase_attribute`, `group_attribute`/`priority_attribute`/`pattern_attribute`, `ambiguous_output_layer`, `unique_patterns`, and `missing_attributes` validation. Handles ambiguous input annotations (multiple lemmas per span). Decorators (global and dynamic) and `EnvelopingBaseSpan` layer integration are not ported (Python-specific).
 
 ---
 
@@ -56,6 +57,65 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+
+---
+
+## 3b. SpanTagger — Parameter-by-Parameter Comparison
+
+| Parameter | EstNLTK | estnltk-rs | Coverage | Notes |
+|-----------|---------|------------|----------|-------|
+| `ruleset` / `patterns` | `AmbiguousRuleset` with `StaticExtractionRule` list | List of pattern dicts | **Full** | Different input format, same information carried |
+| `output_layer` | str, default `'spans'` | str, default `"spans"` | **Full** | |
+| `input_layer` | str (name of existing layer to process) | Input is a `TagResult` dict (from `tag()` output) | **Partial** | Rust takes a layer dict directly instead of referencing by name |
+| `input_attribute` | str (attribute name to match) | str (attribute name to match) | **Full** | |
+| `output_attributes` | Sequence, default `()` | `Vec<String>`, default auto-collected | **Full** | |
+| `conflict_resolver` | str or callable | str only | **Partial** | Custom callable resolvers not supported |
+| `ignore_case` | bool, default `False` | bool, default `false` | **Full** | |
+| `decorator` (global) | `Callable[[Text, ElementaryBaseSpan, Dict], Optional[Dict]]` | — | **None** | Python callables can't run in Rust |
+| `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `ambiguous_output_layer` | Implicit from ruleset type | bool, default `true` | **Full** | |
+| `unique_patterns` | Implicit from ruleset type (`Ruleset` vs `AmbiguousRuleset`) | bool, default `false` | **Full** | |
+| `missing_attributes` | Property on ruleset | `missing_attributes` property on tagger | **Full** | |
+| `rule_map` | Property on ruleset | `rule_map` property on tagger | **Full** | |
+
+**Notes:**
+- The Rust `RsSpanTagger` takes a layer dict (output of `tag()`) as input, enabling pipeline composition: `RsRegexTagger.tag()` → `RsSpanTagger.tag()`. EstNLTK's SpanTagger references an input layer by name from the `Text` object.
+- Matching is exact string comparison of annotation attribute values against pattern strings (same as EstNLTK). Non-string attribute values (int, float, bool) are converted to strings for comparison.
+- All six conflict resolution strategies are supported. Custom callable resolvers are not (Python-specific).
+- Dynamic extraction rules (per-rule decorators) and global decorators are not supported (Python-specific).
+
+---
+
+## 3c. PhraseTagger — Parameter-by-Parameter Comparison
+
+| Parameter | EstNLTK | estnltk-rs | Coverage | Notes |
+|-----------|---------|------------|----------|-------|
+| `ruleset` / `patterns` | `AmbiguousRuleset` with `StaticExtractionRule` list; pattern is a tuple of strings | List of pattern dicts; pattern is a list/tuple of strings | **Full** | Different input format, same information carried |
+| `output_layer` | str, default `'phrases'` | str, default `"phrases"` | **Full** | |
+| `input_layer` | str (name of existing layer to process) | Input is a `TagResult` dict (from `tag()` output) | **Partial** | Rust takes a layer dict directly instead of referencing by name |
+| `input_attribute` | str (attribute name to match) | str (attribute name to match) | **Full** | |
+| `output_attributes` | Sequence, default `None` | `Vec<String>`, default auto-collected | **Full** | |
+| `conflict_resolver` | str or callable | str only | **Partial** | Custom callable resolvers not supported |
+| `ignore_case` | bool, default `False` | bool, default `false` | **Full** | |
+| `decorator` (global) | `Callable` | — | **None** | Python callables can't run in Rust |
+| `phrase_attribute` | str, default `'phrase'` | `Option<String>`, default `"phrase"` | **Full** | Stores the matched phrase tuple as `AnnotationValue::List` → Python tuple |
+| `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
+| `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | Stores phrase tuple (same as `phrase_attribute`) |
+| `ambiguous_output_layer` | Implicit from ruleset type | bool, default `true` | **Full** | |
+| `unique_patterns` | Implicit from ruleset type (`Ruleset` vs `AmbiguousRuleset`) | bool, default `false` | **Full** | |
+| `missing_attributes` | Property on ruleset | `missing_attributes` property on tagger | **Full** | |
+| `rule_map` | Property on ruleset | `rule_map` property on tagger | **Full** | Keys are phrase tuples (Python tuples) |
+
+**Notes:**
+- The Rust `RsPhraseTagger` takes a layer dict (output of `tag()`) as input, enabling pipeline composition with other taggers.
+- Matching algorithm is a direct port of Python's `extract_annotations`: builds a heads index (first word → set of tail sequences), then for each position scans all annotation values and checks tail sequences against subsequent positions.
+- Conflict resolution uses bounding spans (first.start, last.end) and reuses the same algorithms as other taggers.
+- Output `base_span` is a tuple of `(start, end)` tuples, e.g., `((13, 20), (21, 28))`, matching EstNLTK's `EnvelopingBaseSpan` serialization format.
+- Ambiguous input annotations are fully handled: all attribute values from all annotations at each span position are collected into a set, matching Python behavior.
+- Dynamic extraction rules (per-rule decorators) and global decorators are not supported (Python-specific).
 
 ---
 
@@ -224,7 +284,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 | `Layer` | Named, typed container for spans with parent/enveloping relationships | `TagResult` struct (flat dict output) | **Partial** |
 | `Span` | Base span + annotations, linked to layer | `TaggedSpan` (span + annotations, no layer link) | **Partial** |
 | `ElementaryBaseSpan` | `(start, end)` character offsets | `MatchSpan { start, end }` | **Full** |
-| `EnvelopingBaseSpan` | Tuple of `ElementaryBaseSpan` (for PhraseTagger) | — | **None** |
+| `EnvelopingBaseSpan` | Tuple of `ElementaryBaseSpan` (for PhraseTagger) | `EnvelopingTaggedSpan` with `Vec<MatchSpan>` constituent spans + `MatchSpan` bounding span | **Partial** |
 | `Annotation` | Dict of attribute values, linked to span | `HashMap<String, AnnotationValue>` | **Partial** |
 | `ambiguous` flag | Per-layer, controls whether multiple annotations per span allowed | Controlled by `ambiguous_output_layer` config (default `true`) | **Full** |
 | `parent` relationship | Layer can declare parent layer | — | **None** |
@@ -318,8 +378,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Rule map introspection | Implicit in `Ruleset` / `AmbiguousRuleset` | `src/tagger.rs` (6 unit tests) + `src/substring_tagger.rs` (5 unit tests) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
-| SpanTagger tests | Separate test file | — |
-| PhraseTagger tests | Separate test file | — |
+| SpanTagger tests | Separate test file | `tests/test_span_tagger.rs` (7 tests) + `src/span_tagger.rs` (19 unit tests) |
+| PhraseTagger tests | Separate test file | `tests/test_phrase_tagger.rs` (8 tests) + `src/phrase_tagger.rs` (24 unit tests) |
 
 ---
 
@@ -327,20 +387,22 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 
 | Category | Full | Partial | None |
 |----------|------|---------|------|
-| Tagger types (4) | 0 | 2 | 2 |
+| Tagger types (4) | 0 | 4 | 0 |
 | RegexTagger parameters (11) | 7 | 2 | 2 |
 | SubstringTagger parameters (12) | 9 | 2 | 1 |
+| SpanTagger parameters (15) | 12 | 2 | 1 |
 | Extraction rules (6 features) | 3 | 2 | 1 |
 | Rulesets (7 features) | 3 | 4 | 0 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 1 | 2 (+1 N/A) |
 | Helper functions (6) | 5 | 0 | 0 (+1 N/A) |
 | Regex library classes (4) | 0 | 3 | 1 |
-| Data model (13 concepts) | 2 | 5 | 6 |
+| PhraseTagger parameters (16) | 11 | 3 | 1 (+1 N/A) |
+| Data model (13 concepts) | 2 | 6 | 5 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, regex, string, bool) — the `regex` type validates patterns with resharp at load time, matching EstNLTK's `CONVERSION_MAP["regex"]` which compiles to `regex.Regex`. Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `rule_map` property: maps pattern strings to grouped rules on both `RsRegexTagger` and `RsSubstringTagger` — matching EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` introspection API. `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). `RegexPattern` template composition: `rs_regex_pattern(template, components)` substitutes named placeholders with non-capture-group-wrapped sub-patterns and validates the result — matching EstNLTK's `RegexPattern` core pattern building (without the `RegexElement` test infrastructure). Morphological expansion: `noun_forms_expander` and `default_expander` via Vabamorf FFI bindings (feature-gated), integrated into `SubstringTagger` via `expander`/`vabamorf` parameters. Verified by 56 cross-implementation tests (23 regex + 14 substring + 19 expander) including Estonian multi-byte text. 207 Rust tests total (166 unit + 41 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. SpanTagger: exact string matching of annotation attribute values against a ruleset, with `ignore_case`, all six conflict strategies, group/priority/pattern attributes, ambiguous/non-ambiguous output, and `missing_attributes` validation — matching EstNLTK's `SpanTagger` core functionality for static rules. Takes a `TagResult` dict as input, enabling pipeline composition (`RsRegexTagger.tag()` → `RsSpanTagger.tag()`). PhraseTagger: sequential attribute value matching across consecutive spans, with heads-index-based matching algorithm (direct port of Python's `extract_annotations`), all six conflict strategies (using bounding spans), `phrase_attribute`/`group_attribute`/`priority_attribute`/`pattern_attribute`, ambiguous/non-ambiguous output, and ambiguous input annotation handling — matching EstNLTK's `PhraseTagger` core functionality for static rules. Output `base_span` is a tuple of `(start, end)` tuples matching EstNLTK's `EnvelopingBaseSpan` serialization. CSV rule loading with typed columns (int, float, regex, string, bool) — the `regex` type validates patterns with resharp at load time, matching EstNLTK's `CONVERSION_MAP["regex"]` which compiles to `regex.Regex`. Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `rule_map` property: maps pattern strings/tuples to grouped rules on all four taggers — matching EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` introspection API. `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). `RegexPattern` template composition: `rs_regex_pattern(template, components)` substitutes named placeholders with non-capture-group-wrapped sub-patterns and validates the result — matching EstNLTK's `RegexPattern` core pattern building (without the `RegexElement` test infrastructure). Morphological expansion: `noun_forms_expander` and `default_expander` via Vabamorf FFI bindings (feature-gated), integrated into `SubstringTagger` via `expander`/`vabamorf` parameters. Verified by 56 cross-implementation tests (23 regex + 14 substring + 19 expander) including Estonian multi-byte text. 255 Rust tests total (204 unit + 50 integration + 1 doc test).
 
-**Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library test infrastructure (`RegexElement`).
+**Biggest gaps:** Decorators (global and dynamic), regex library test infrastructure (`RegexElement`).
 
 **By design, not ported:** Features tied to Python runtime (decorators, arbitrary attribute types, callable conflict resolvers) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration). Morphological expanders are ported as built-in named expanders rather than arbitrary callables.
 
