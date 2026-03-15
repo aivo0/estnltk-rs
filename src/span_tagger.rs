@@ -6,7 +6,8 @@ use pyo3::types::{PyDict, PyList};
 use crate::conflict::{resolve_conflicts, MatchEntry};
 use crate::types::{
     assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
-    has_missing_attributes, AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggerRule,
+    has_missing_attributes, AnnotationValue, ConflictStrategy, MatchSpan, TaggerError, TagResult,
+    TaggerRule,
 };
 
 /// A rule for the SpanTagger — maps a pattern string to static attributes.
@@ -85,7 +86,7 @@ pub struct SpanTaggerConfig {
 
 impl SpanTagger {
     /// Create a new SpanTagger, validating configuration.
-    pub fn new(rules: Vec<SpanRule>, config: SpanTaggerConfig) -> Result<Self, String> {
+    pub fn new(rules: Vec<SpanRule>, config: SpanTaggerConfig) -> Result<Self, TaggerError> {
         // Enforce unique patterns if configured.
         if config.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
@@ -545,7 +546,7 @@ mod tests {
         };
         let result = SpanTagger::new(rules, config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Duplicate pattern"));
+        assert!(result.unwrap_err().to_string().contains("Duplicate pattern"));
     }
 
     #[test]

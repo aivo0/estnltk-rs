@@ -5,7 +5,8 @@ use crate::conflict::{
 };
 use crate::types::{
     check_unique_phrase_patterns, has_missing_attributes, normalize_annotation, Annotation,
-    AnnotationValue, ConflictStrategy, EnvelopingTaggedSpan, MatchSpan, PhraseTagResult, TagResult,
+    AnnotationValue, ConflictStrategy, EnvelopingTaggedSpan, MatchSpan, TaggerError,
+    PhraseTagResult, TagResult,
 };
 
 /// A rule for the PhraseTagger — maps a phrase pattern (tuple of strings) to
@@ -72,11 +73,13 @@ pub struct PhraseTagger {
 
 impl PhraseTagger {
     /// Create a new PhraseTagger, validating configuration.
-    pub fn new(rules: Vec<PhraseRule>, config: PhraseTaggerConfig) -> Result<Self, String> {
+    pub fn new(rules: Vec<PhraseRule>, config: PhraseTaggerConfig) -> Result<Self, TaggerError> {
         // Validate: each pattern must have at least one element.
         for (i, rule) in rules.iter().enumerate() {
             if rule.pattern.is_empty() {
-                return Err(format!("Rule {} has an empty pattern; phrases must have at least one word", i));
+                return Err(TaggerError::Config(format!(
+                    "Rule {} has an empty pattern; phrases must have at least one word", i
+                )));
             }
         }
 
@@ -998,7 +1001,7 @@ mod tests {
         };
         let result = PhraseTagger::new(rules, config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Duplicate phrase pattern"));
+        assert!(result.unwrap_err().to_string().contains("Duplicate phrase pattern"));
     }
 
     #[test]

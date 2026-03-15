@@ -9,7 +9,8 @@ use crate::conflict::resolve_conflicts;
 use crate::types::ConflictStrategy;
 use crate::types::{
     assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
-    has_missing_attributes, AnnotationValue, MatchSpan, TagResult, TaggerConfig, TaggerRule,
+    has_missing_attributes, AnnotationValue, MatchSpan, TaggerError, TagResult, TaggerConfig,
+    TaggerRule,
 };
 
 /// A substring extraction rule — pattern string with static attributes.
@@ -75,7 +76,7 @@ impl SubstringTagger {
         rules: Vec<SubstringRule>,
         token_separators: &str,
         config: TaggerConfig,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, TaggerError> {
         // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
         if config.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
@@ -105,7 +106,7 @@ impl SubstringTagger {
 
         // Build the Aho-Corasick automaton.
         let automaton = AhoCorasick::new(&unique_patterns)
-            .map_err(|e| format!("Aho-Corasick build error: {}", e))?;
+            .map_err(|e| TaggerError::Automaton(format!("Aho-Corasick build error: {}", e)))?;
 
         let separators: Vec<char> = token_separators.chars().collect();
 
@@ -582,7 +583,7 @@ mod tests {
         cfg.unique_patterns = true;
         let result = SubstringTagger::new(rules, "", cfg);
         assert!(result.is_err());
-        assert!(result.err().unwrap().contains("Duplicate pattern"));
+        assert!(result.err().unwrap().to_string().contains("Duplicate pattern"));
     }
 
     #[test]
@@ -609,7 +610,7 @@ mod tests {
         cfg.lowercase_text = true;
         let result = SubstringTagger::new(rules, "", cfg);
         assert!(result.is_err());
-        assert!(result.err().unwrap().contains("Duplicate pattern"));
+        assert!(result.err().unwrap().to_string().contains("Duplicate pattern"));
     }
 
     #[test]

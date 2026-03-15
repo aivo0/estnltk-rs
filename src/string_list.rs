@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::types::TaggerError;
+
 /// Escape regex metacharacters in a string (like Python's `regex.escape()`).
 fn regex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
@@ -138,20 +140,20 @@ pub fn build_string_list_pattern(
     replacements: &HashMap<String, String>,
     ignore_case: bool,
     ignore_case_flags: Option<&[bool]>,
-) -> Result<String, String> {
+) -> Result<String, TaggerError> {
     if strings.is_empty() {
-        return Err("strings list must not be empty".to_string());
+        return Err(TaggerError::PatternComposition("strings list must not be empty".to_string()));
     }
 
     // Resolve per-string case flags
     let case_flags: Vec<bool> = match ignore_case_flags {
         Some(flags) => {
             if flags.len() != strings.len() {
-                return Err(format!(
+                return Err(TaggerError::PatternComposition(format!(
                     "ignore_case_flags length ({}) must match strings length ({})",
                     flags.len(),
                     strings.len()
-                ));
+                )));
             }
             flags.to_vec()
         }
@@ -161,10 +163,10 @@ pub fn build_string_list_pattern(
     // Validate replacements: keys must be single characters
     for key in replacements.keys() {
         if key.chars().count() != 1 {
-            return Err(format!(
+            return Err(TaggerError::PatternComposition(format!(
                 "Replacement key '{}' must be a single character",
                 key
-            ));
+            )));
         }
     }
 
@@ -233,15 +235,15 @@ pub fn build_string_list_pattern(
 ///
 /// # Returns
 /// A regex pattern string like `(?:pattern1|pattern2|...)`, or an error message.
-pub fn build_choice_group_pattern(patterns: &[String]) -> Result<String, String> {
+pub fn build_choice_group_pattern(patterns: &[String]) -> Result<String, TaggerError> {
     if patterns.is_empty() {
-        return Err("patterns list must not be empty".to_string());
+        return Err(TaggerError::PatternComposition("patterns list must not be empty".to_string()));
     }
 
     // Validate each pattern compiles
     for pattern in patterns {
         resharp::Regex::new(pattern)
-            .map_err(|e| format!("Invalid regex pattern '{}': {}", pattern, e))?;
+            .map_err(|e| TaggerError::InvalidRegex(format!("Invalid regex pattern '{}': {}", pattern, e)))?;
     }
 
     if patterns.len() == 1 {
@@ -276,25 +278,25 @@ pub fn build_merged_string_lists_pattern(
     replacements: &HashMap<String, String>,
     ignore_case: bool,
     ignore_case_flags_per_list: Option<&[Vec<bool>]>,
-) -> Result<String, String> {
+) -> Result<String, TaggerError> {
     if string_lists.is_empty() {
-        return Err("string_lists must not be empty".to_string());
+        return Err(TaggerError::PatternComposition("string_lists must not be empty".to_string()));
     }
 
     if let Some(flags_lists) = ignore_case_flags_per_list {
         if flags_lists.len() != string_lists.len() {
-            return Err(format!(
+            return Err(TaggerError::PatternComposition(format!(
                 "ignore_case_flags_per_list length ({}) must match string_lists length ({})",
                 flags_lists.len(),
                 string_lists.len()
-            ));
+            )));
         }
         for (i, (strings, flags)) in string_lists.iter().zip(flags_lists.iter()).enumerate() {
             if flags.len() != strings.len() {
-                return Err(format!(
+                return Err(TaggerError::PatternComposition(format!(
                     "ignore_case_flags_per_list[{}] length ({}) must match string_lists[{}] length ({})",
                     i, flags.len(), i, strings.len()
-                ));
+                )));
             }
         }
     }
@@ -351,9 +353,9 @@ pub fn build_merged_string_lists_pattern(
 pub fn build_regex_pattern(
     template: &str,
     components: &HashMap<String, String>,
-) -> Result<String, String> {
+) -> Result<String, TaggerError> {
     if template.is_empty() {
-        return Err("template must not be empty".to_string());
+        return Err(TaggerError::PatternComposition("template must not be empty".to_string()));
     }
 
     // Parse template and substitute placeholders.
@@ -383,17 +385,21 @@ pub fn build_regex_pattern(
                 .position(|&b| b == b'}')
                 .map(|pos| name_start + pos)
                 .ok_or_else(|| {
-                    format!("Unclosed placeholder '{{' at position {}", i)
+                    TaggerError::PatternComposition(format!(
+                        "Unclosed placeholder '{{' at position {}", i
+                    ))
                 })?;
             let name = &template[name_start..end];
             if name.is_empty() {
-                return Err("Empty placeholder name '{}' in template".to_string());
+                return Err(TaggerError::PatternComposition(
+                    "Empty placeholder name '{}' in template".to_string()
+                ));
             }
             let pattern = components.get(name).ok_or_else(|| {
-                format!(
+                TaggerError::PatternComposition(format!(
                     "No component provided for placeholder '{{{}}}'",
                     name
-                )
+                ))
             })?;
             // Wrap in non-capture group to isolate from surrounding syntax
             result.push_str("(?:");
@@ -411,10 +417,10 @@ pub fn build_regex_pattern(
                 literal_start = i;
                 continue;
             }
-            return Err(format!(
+            return Err(TaggerError::PatternComposition(format!(
                 "Unexpected '}}' at position {} without matching '{{'",
                 i
-            ));
+            )));
         } else {
             i += 1;
         }
@@ -424,7 +430,7 @@ pub fn build_regex_pattern(
 
     // Validate the composed pattern with resharp
     resharp::Regex::new(&result)
-        .map_err(|e| format!("Composed pattern is invalid: {}", e))?;
+        .map_err(|e| TaggerError::InvalidRegex(format!("Composed pattern is invalid: {}", e)))?;
 
     Ok(result)
 }
@@ -615,7 +621,7 @@ mod tests {
     fn test_choice_group_empty_error() {
         let result = build_choice_group_pattern(&[]);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must not be empty"));
+        assert!(result.unwrap_err().to_string().contains("must not be empty"));
     }
 
     #[test]
@@ -623,7 +629,7 @@ mod tests {
         let patterns = vec![r"\d+".to_string(), r"[unclosed".to_string()];
         let result = build_choice_group_pattern(&patterns);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("[unclosed"));
+        assert!(result.unwrap_err().to_string().contains("[unclosed"));
     }
 
     #[test]
@@ -806,7 +812,7 @@ mod tests {
         let components = HashMap::new();
         let result = build_regex_pattern("{missing}", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("missing"));
+        assert!(result.unwrap_err().to_string().contains("missing"));
     }
 
     #[test]
@@ -814,7 +820,7 @@ mod tests {
         let components = HashMap::new();
         let result = build_regex_pattern("", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must not be empty"));
+        assert!(result.unwrap_err().to_string().contains("must not be empty"));
     }
 
     #[test]
@@ -822,7 +828,7 @@ mod tests {
         let components = HashMap::new();
         let result = build_regex_pattern("abc{def", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unclosed"));
+        assert!(result.unwrap_err().to_string().contains("Unclosed"));
     }
 
     #[test]
@@ -830,7 +836,7 @@ mod tests {
         let components = HashMap::new();
         let result = build_regex_pattern("abc{}def", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Empty placeholder"));
+        assert!(result.unwrap_err().to_string().contains("Empty placeholder"));
     }
 
     #[test]
@@ -890,7 +896,7 @@ mod tests {
         components.insert("bad".to_string(), "[unclosed".to_string());
         let result = build_regex_pattern("{bad}", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Composed pattern is invalid"));
+        assert!(result.unwrap_err().to_string().contains("Composed pattern is invalid"));
     }
 
     #[test]
@@ -898,6 +904,6 @@ mod tests {
         let components = HashMap::new();
         let result = build_regex_pattern("abc}def", &components);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unexpected '}'"));
+        assert!(result.unwrap_err().to_string().contains("Unexpected '}'"));
     }
 }

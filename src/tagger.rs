@@ -7,7 +7,8 @@ use crate::conflict::{resolve_conflicts, MatchEntry};
 use crate::types::ConflictStrategy;
 use crate::types::{
     assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
-    has_missing_attributes, AnnotationValue, ExtractionRule, MatchSpan, TagResult, TaggerConfig,
+    has_missing_attributes, AnnotationValue, ExtractionRule, MatchSpan, TaggerError, TagResult,
+    TaggerConfig,
 };
 
 /// The core regex tagger — Rust equivalent of EstNLTK's `RegexTagger`.
@@ -18,7 +19,7 @@ pub struct RegexTagger {
 
 impl RegexTagger {
     /// Create a new tagger, validating configuration.
-    pub fn new(rules: Vec<ExtractionRule>, config: TaggerConfig) -> Result<Self, String> {
+    pub fn new(rules: Vec<ExtractionRule>, config: TaggerConfig) -> Result<Self, TaggerError> {
         // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
         if config.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
@@ -271,30 +272,32 @@ pub fn make_rule(
     attributes: HashMap<String, AnnotationValue>,
     group: u32,
     priority: i32,
-) -> Result<ExtractionRule, String> {
+) -> Result<ExtractionRule, TaggerError> {
     let compiled = resharp::Regex::new(pattern)
-        .map_err(|e| format!("Regex compile error for '{}': {}", pattern, e))?;
+        .map_err(|e| TaggerError::InvalidRegex(format!(
+            "Regex compile error for '{}': {}", pattern, e
+        )))?;
 
     let capture_re = if group > 0 {
         let anchored = format!("^(?:{})$", pattern);
         let re = regex::Regex::new(&anchored).map_err(|e| {
-            format!(
+            TaggerError::InvalidRegex(format!(
                 "Capture group extraction failed for pattern '{}': {}. \
                  Patterns using resharp-only syntax (intersection, complement) \
                  cannot use capture groups (group > 0).",
                 pattern, e
-            )
+            ))
         })?;
         // Validate that the requested group exists in the pattern.
         // captures_len() returns group count including group 0.
         if group as usize >= re.captures_len() {
-            return Err(format!(
+            return Err(TaggerError::Config(format!(
                 "Rule requests group={} but pattern '{}' only has {} capture group(s) (0..{}).",
                 group,
                 pattern,
                 re.captures_len() - 1,
                 re.captures_len() - 1
-            ));
+            )));
         }
         Some(re)
     } else {
@@ -498,7 +501,7 @@ mod tests {
         // Pattern has 2 groups, requesting group 3 should fail at construction.
         let result = make_rule(r"(a)(b)", HashMap::new(), 3, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("only has 2 capture group(s)"));
+        assert!(result.unwrap_err().to_string().contains("only has 2 capture group(s)"));
     }
 
     #[test]
@@ -506,7 +509,7 @@ mod tests {
         // Pattern has no capture groups, requesting group 1 should fail.
         let result = make_rule(r"hello", HashMap::new(), 1, 0);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("only has 0 capture group(s)"));
+        assert!(result.unwrap_err().to_string().contains("only has 0 capture group(s)"));
     }
 
     #[test]
@@ -719,7 +722,7 @@ mod tests {
         cfg.unique_patterns = true;
         let result = RegexTagger::new(vec![r1, r2], cfg);
         assert!(result.is_err());
-        assert!(result.err().unwrap().contains("Duplicate pattern"));
+        assert!(result.err().unwrap().to_string().contains("Duplicate pattern"));
     }
 
     #[test]
@@ -753,7 +756,7 @@ mod tests {
         cfg.lowercase_text = true;
         let result = RegexTagger::new(vec![r1, r2], cfg);
         assert!(result.is_err());
-        assert!(result.err().unwrap().contains("Duplicate pattern"));
+        assert!(result.err().unwrap().to_string().contains("Duplicate pattern"));
     }
 
     #[test]

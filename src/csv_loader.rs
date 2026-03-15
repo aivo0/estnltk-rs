@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::types::AnnotationValue;
+use crate::types::{AnnotationValue, TaggerError};
 
 /// A parsed rule from a CSV row (not yet compiled into a regex).
 #[derive(Debug, Clone)]
@@ -28,7 +28,7 @@ enum ColumnType {
 }
 
 impl std::str::FromStr for ColumnType {
-    type Err = String;
+    type Err = TaggerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -37,52 +37,52 @@ impl std::str::FromStr for ColumnType {
             "float" => Ok(ColumnType::Float),
             "bool" => Ok(ColumnType::Bool),
             "regex" => Ok(ColumnType::Regex),
-            other => Err(format!(
+            other => Err(TaggerError::Csv(format!(
                 "Unknown data type '{}'. Supported types: string, int, float, bool, regex",
                 other
-            )),
+            ))),
         }
     }
 }
 
 impl ColumnType {
 
-    fn convert(&self, value: &str, line: usize, col: &str) -> Result<AnnotationValue, String> {
+    fn convert(&self, value: &str, line: usize, col: &str) -> Result<AnnotationValue, TaggerError> {
         match self {
             ColumnType::Str => Ok(AnnotationValue::Str(value.to_string())),
             ColumnType::Int => value
                 .parse::<i64>()
                 .map(AnnotationValue::Int)
                 .map_err(|_| {
-                    format!(
+                    TaggerError::Csv(format!(
                         "Line {}: cannot convert '{}' to int in column '{}'",
                         line, value, col
-                    )
+                    ))
                 }),
             ColumnType::Float => value
                 .parse::<f64>()
                 .map(AnnotationValue::Float)
                 .map_err(|_| {
-                    format!(
+                    TaggerError::Csv(format!(
                         "Line {}: cannot convert '{}' to float in column '{}'",
                         line, value, col
-                    )
+                    ))
                 }),
             ColumnType::Bool => match value {
                 "true" | "True" | "TRUE" | "1" => Ok(AnnotationValue::Bool(true)),
                 "false" | "False" | "FALSE" | "0" => Ok(AnnotationValue::Bool(false)),
-                _ => Err(format!(
+                _ => Err(TaggerError::Csv(format!(
                     "Line {}: cannot convert '{}' to bool in column '{}'",
                     line, value, col
-                )),
+                ))),
             },
             ColumnType::Regex => {
                 // Validate the pattern compiles with resharp, then store as string.
                 resharp::Regex::new(value).map_err(|e| {
-                    format!(
+                    TaggerError::Csv(format!(
                         "Line {}: invalid regex pattern '{}' in column '{}': {}",
                         line, value, col, e
-                    )
+                    ))
                 })?;
                 Ok(AnnotationValue::Str(value.to_string()))
             }
@@ -95,11 +95,13 @@ fn resolve_column(
     col: &ColumnRef,
     column_names: &[String],
     label: &str,
-) -> Result<usize, String> {
+) -> Result<usize, TaggerError> {
     match col {
         ColumnRef::Index(i) => {
             if *i >= column_names.len() {
-                return Err(format!("{} column index {} is out of range", label, i));
+                return Err(TaggerError::Csv(format!(
+                    "{} column index {} is out of range", label, i
+                )));
             }
             Ok(*i)
         }
@@ -107,10 +109,10 @@ fn resolve_column(
             .iter()
             .position(|n| n == name)
             .ok_or_else(|| {
-                format!(
+                TaggerError::Csv(format!(
                     "{} column '{}' is missing from the file header",
                     label, name
-                )
+                ))
             }),
     }
 }
@@ -155,38 +157,38 @@ impl Default for CsvLoadConfig {
 pub fn load_rules_from_csv<P: AsRef<Path>>(
     path: P,
     config: &CsvLoadConfig,
-) -> Result<Vec<CsvRule>, String> {
+) -> Result<Vec<CsvRule>, TaggerError> {
     let path = path.as_ref();
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .from_path(path)
-        .map_err(|e| format!("Cannot open '{}': {}", path.display(), e))?;
+        .map_err(|e| TaggerError::Csv(format!("Cannot open '{}': {}", path.display(), e)))?;
 
     let mut records = rdr.records();
 
     // Row 1: column names
     let column_names: Vec<String> = records
         .next()
-        .ok_or("Invalid file format: Line 1: The first header row is missing")?
-        .map_err(|e| format!("Invalid file format: Line 1: {}", e))?
+        .ok_or_else(|| TaggerError::Csv("Invalid file format: Line 1: The first header row is missing".to_string()))?
+        .map_err(|e| TaggerError::Csv(format!("Invalid file format: Line 1: {}", e)))?
         .iter()
         .map(|s| s.to_string())
         .collect();
 
     if column_names.is_empty() {
-        return Err("Invalid file format: Line 1: No columns found".to_string());
+        return Err(TaggerError::Csv("Invalid file format: Line 1: No columns found".to_string()));
     }
 
     // Row 2: column types
     let type_record = records
         .next()
-        .ok_or("Invalid file format: Line 2: The second header row is missing")?
-        .map_err(|e| format!("Invalid file format: Line 2: {}", e))?;
+        .ok_or_else(|| TaggerError::Csv("Invalid file format: Line 2: The second header row is missing".to_string()))?
+        .map_err(|e| TaggerError::Csv(format!("Invalid file format: Line 2: {}", e)))?;
 
     let type_strings: Vec<String> = type_record.iter().map(|s| s.to_string()).collect();
 
     if type_strings.len() != column_names.len() {
-        return Err("Invalid file format: Line 2: Header rows have different length".to_string());
+        return Err(TaggerError::Csv("Invalid file format: Line 2: Header rows have different length".to_string()));
     }
 
     let n = column_names.len();
@@ -195,10 +197,10 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
     let mut converters = Vec::with_capacity(n);
     for (i, ts) in type_strings.iter().enumerate() {
         let ct = ts.parse::<ColumnType>().map_err(|e| {
-            format!(
+            TaggerError::Csv(format!(
                 "Invalid file format: Line 2: column '{}': {}",
                 column_names[i], e
-            )
+            ))
         })?;
         converters.push(ct);
     }
@@ -210,7 +212,7 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
         Some(c) => {
             let idx = resolve_column(c, &column_names, "Group")?;
             if idx == key_idx {
-                return Err("Group column cannot coincide with key column".to_string());
+                return Err(TaggerError::Csv("Group column cannot coincide with key column".to_string()));
             }
             Some(idx)
         }
@@ -221,10 +223,10 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
         Some(c) => {
             let idx = resolve_column(c, &column_names, "Priority")?;
             if idx == key_idx {
-                return Err("Priority column cannot coincide with key column".to_string());
+                return Err(TaggerError::Csv("Priority column cannot coincide with key column".to_string()));
             }
             if group_idx == Some(idx) {
-                return Err("Priority column cannot coincide with group column".to_string());
+                return Err(TaggerError::Csv("Priority column cannot coincide with group column".to_string()));
             }
             Some(idx)
         }
@@ -242,16 +244,16 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
     for (row_num, record_result) in records.enumerate() {
         let line = row_num + 3; // 1-indexed, after 2 header rows
         let record = record_result
-            .map_err(|e| format!("Invalid file format: Line {}: {}", line, e))?;
+            .map_err(|e| TaggerError::Csv(format!("Invalid file format: Line {}: {}", line, e)))?;
 
         let fields: Vec<&str> = record.iter().collect();
         if fields.len() != n {
-            return Err(format!(
+            return Err(TaggerError::Csv(format!(
                 "Invalid file format: Line {}: expected {} columns, got {}",
                 line,
                 n,
                 fields.len()
-            ));
+            )));
         }
 
         // Extract pattern
@@ -264,18 +266,18 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
                 match val {
                     AnnotationValue::Int(i) => {
                         if i < 0 {
-                            return Err(format!(
+                            return Err(TaggerError::Csv(format!(
                                 "Line {}: group value must be non-negative, got {}",
                                 line, i
-                            ));
+                            )));
                         }
                         i as u32
                     }
                     _ => {
-                        return Err(format!(
+                        return Err(TaggerError::Csv(format!(
                             "Line {}: group column must be of type int",
                             line
-                        ))
+                        )))
                     }
                 }
             }
@@ -289,10 +291,10 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
                 match val {
                     AnnotationValue::Int(i) => i as i32,
                     _ => {
-                        return Err(format!(
+                        return Err(TaggerError::Csv(format!(
                             "Line {}: priority column must be of type int",
                             line
-                        ))
+                        )))
                     }
                 }
             }
@@ -427,7 +429,7 @@ mod tests {
         let f = write_temp_csv(csv);
         let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("first header row"));
+        assert!(result.unwrap_err().to_string().contains("first header row"));
     }
 
     #[test]
@@ -436,7 +438,7 @@ mod tests {
         let f = write_temp_csv(csv);
         let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("second header row"));
+        assert!(result.unwrap_err().to_string().contains("second header row"));
     }
 
     #[test]
@@ -445,7 +447,7 @@ mod tests {
         let f = write_temp_csv(csv);
         let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown data type"));
+        assert!(result.unwrap_err().to_string().contains("Unknown data type"));
     }
 
     #[test]
@@ -454,7 +456,7 @@ mod tests {
         let f = write_temp_csv(csv);
         let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.unwrap_err().to_string();
         // csv crate may report this as a parse error or we catch it as column count mismatch
         assert!(
             err.contains("expected 2 columns") || err.contains("Line 3"),
@@ -474,7 +476,7 @@ mod tests {
         };
         let result = load_rules_from_csv(f.path(), &config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("out of range"));
+        assert!(result.unwrap_err().to_string().contains("out of range"));
     }
 
     #[test]
@@ -488,7 +490,7 @@ mod tests {
         };
         let result = load_rules_from_csv(f.path(), &config);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("coincide"));
+        assert!(result.unwrap_err().to_string().contains("coincide"));
     }
 
     #[test]
@@ -513,7 +515,7 @@ mod tests {
         let f = write_temp_csv(csv);
         let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
         assert!(result.is_err());
-        let err = result.unwrap_err();
+        let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid regex pattern"), "Unexpected error: {}", err);
         assert!(err.contains("filter_re"), "Error should mention column name: {}", err);
         assert!(err.contains("Line 3"), "Error should mention line number: {}", err);

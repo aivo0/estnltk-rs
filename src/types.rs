@@ -2,6 +2,52 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
 use std::collections::{HashMap, HashSet};
 
+/// Structured error type for tagger operations.
+///
+/// Replaces raw `String` errors with categorized variants, enabling callers
+/// to match on error kinds while preserving descriptive messages.  All
+/// variants convert to `pyo3::PyErr` via the `From` impl for seamless
+/// Python interop.
+#[derive(Debug, thiserror::Error)]
+pub enum TaggerError {
+    /// A uniqueness constraint was violated (duplicate pattern/phrase).
+    #[error("{0}")]
+    DuplicatePattern(String),
+    /// A regex pattern failed to compile (resharp or std::regex).
+    #[error("{0}")]
+    InvalidRegex(String),
+    /// An invalid configuration value was provided.
+    #[error("{0}")]
+    Config(String),
+    /// A CSV file could not be loaded or parsed.
+    #[error("{0}")]
+    Csv(String),
+    /// A pattern composition operation failed (string_list, choice_group, etc.).
+    #[error("{0}")]
+    PatternComposition(String),
+    /// An Aho-Corasick automaton could not be built.
+    #[error("{0}")]
+    Automaton(String),
+}
+
+impl From<TaggerError> for pyo3::PyErr {
+    fn from(err: TaggerError) -> pyo3::PyErr {
+        match &err {
+            TaggerError::DuplicatePattern(_) | TaggerError::Config(_) => {
+                pyo3::exceptions::PyValueError::new_err(err.to_string())
+            }
+            TaggerError::InvalidRegex(_)
+            | TaggerError::PatternComposition(_)
+            | TaggerError::Automaton(_) => {
+                pyo3::exceptions::PyValueError::new_err(err.to_string())
+            }
+            TaggerError::Csv(_) => {
+                pyo3::exceptions::PyIOError::new_err(err.to_string())
+            }
+        }
+    }
+}
+
 /// Character-level span (not byte-level).
 /// Maps to EstNLTK's `ElementaryBaseSpan`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,7 +263,7 @@ pub enum ConflictStrategy {
 }
 
 impl std::str::FromStr for ConflictStrategy {
-    type Err = String;
+    type Err = TaggerError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -227,7 +273,10 @@ impl std::str::FromStr for ConflictStrategy {
             "KEEP_ALL_EXCEPT_PRIORITY" => Ok(ConflictStrategy::KeepAllExceptPriority),
             "KEEP_MAXIMAL_EXCEPT_PRIORITY" => Ok(ConflictStrategy::KeepMaximalExceptPriority),
             "KEEP_MINIMAL_EXCEPT_PRIORITY" => Ok(ConflictStrategy::KeepMinimalExceptPriority),
-            other => Err(format!("Unknown conflict resolver: '{}'", other)),
+            other => Err(TaggerError::Config(format!(
+                "Unknown conflict resolver: '{}'",
+                other
+            ))),
         }
     }
 }
@@ -286,7 +335,7 @@ pub fn has_missing_attributes(rules_attrs: &[&HashMap<String, AnnotationValue>])
 ///
 /// Returns `Err` with a message listing the first duplicate found, or `Ok(())` if all unique.
 /// Used when `TaggerConfig.unique_patterns` is `true` to enforce EstNLTK `Ruleset` semantics.
-pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), String> {
+pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), TaggerError> {
     let mut seen = HashSet::new();
     for &pat in patterns {
         let key = if lowercase {
@@ -295,11 +344,11 @@ pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), S
             pat.to_string()
         };
         if seen.contains(&key) {
-            return Err(format!(
+            return Err(TaggerError::DuplicatePattern(format!(
                 "Duplicate pattern '{}' not allowed when unique_patterns=true. \
                  Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
                 key
-            ));
+            )));
         }
         seen.insert(key);
     }
@@ -420,7 +469,7 @@ pub fn compute_rule_map<R: TaggerRule>(
 ///
 /// Returns `Err` with a message listing the first duplicate found, or `Ok(())` if all unique.
 /// Used when `PhraseTaggerConfig.unique_patterns` is `true`.
-pub fn check_unique_phrase_patterns(patterns: &[&[String]], lowercase: bool) -> Result<(), String> {
+pub fn check_unique_phrase_patterns(patterns: &[&[String]], lowercase: bool) -> Result<(), TaggerError> {
     let mut seen: HashSet<Vec<String>> = HashSet::new();
     for pat in patterns {
         let key: Vec<String> = if lowercase {
@@ -429,11 +478,11 @@ pub fn check_unique_phrase_patterns(patterns: &[&[String]], lowercase: bool) -> 
             pat.to_vec()
         };
         if seen.contains(&key) {
-            return Err(format!(
+            return Err(TaggerError::DuplicatePattern(format!(
                 "Duplicate phrase pattern '{:?}' not allowed when unique_patterns=true. \
                  Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
                 key
-            ));
+            )));
         }
         seen.insert(key);
     }

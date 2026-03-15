@@ -190,7 +190,7 @@ fn test_csv_multiple_attribute_types() {
 fn test_csv_nonexistent_file() {
     let result = load_rules_from_csv("/tmp/nonexistent_file_12345.csv", &CsvLoadConfig::default());
     assert!(result.is_err());
-    assert!(result.unwrap_err().contains("Cannot open"));
+    assert!(result.unwrap_err().to_string().contains("Cannot open"));
 }
 
 #[test]
@@ -257,7 +257,7 @@ fn test_csv_regex_type_invalid_pattern_rejected() {
     let f = write_temp_csv(csv);
     let result = load_rules_from_csv(f.path(), &CsvLoadConfig::default());
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = result.unwrap_err().to_string();
     assert!(
         err.contains("invalid regex pattern"),
         "Should report invalid regex: {}",

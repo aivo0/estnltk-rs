@@ -62,7 +62,7 @@ fn parse_pattern_fields(
 fn parse_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<ExtractionRule> {
     let (pattern, attributes, group, priority) = parse_pattern_fields(dict)?;
     make_rule(&pattern, attributes, group, priority)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        .map_err(PyErr::from)
 }
 
 /// Python-exposed RegexTagger class.
@@ -98,7 +98,7 @@ impl PyRegexTagger {
         }
 
         let strategy = conflict_resolver.parse::<ConflictStrategy>()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         let config = TaggerConfig {
             output_layer: output_layer.to_string(),
@@ -115,7 +115,7 @@ impl PyRegexTagger {
         };
 
         let tagger = RegexTagger::new(rules, config)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         Ok(Self { inner: tagger })
     }
@@ -226,7 +226,7 @@ fn rs_regex_tag(
     }
 
     let strategy = conflict_resolver.parse::<ConflictStrategy>()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let config = TaggerConfig {
         output_layer: "regexes".to_string(),
@@ -243,7 +243,7 @@ fn rs_regex_tag(
     };
 
     let tagger = RegexTagger::new(rules, config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let result = tagger.tag(text);
 
@@ -317,7 +317,7 @@ impl PySubstringTagger {
                 let py_vm_ref = py_vm.borrow();
                 let mut vm = py_vm_ref.inner.lock().unwrap();
                 expander::expand_rules(rules, expander_name, &mut vm, lowercase_text)
-                    .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
+                    ?
             }
             #[cfg(not(feature = "vabamorf"))]
             {
@@ -332,7 +332,7 @@ impl PySubstringTagger {
         };
 
         let strategy = conflict_resolver.parse::<ConflictStrategy>()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         let config = TaggerConfig {
             output_layer: output_layer.to_string(),
@@ -349,7 +349,7 @@ impl PySubstringTagger {
         };
 
         let tagger = SubstringTagger::new(rules, token_separators, config)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         Ok(Self { inner: tagger })
     }
@@ -444,7 +444,7 @@ fn rs_substring_tag(
             let py_vm_ref = py_vm.borrow();
             let mut vm = py_vm_ref.inner.lock().unwrap();
             expander::expand_rules(rules, expander_name, &mut vm, lowercase_text)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?
+                ?
         }
         #[cfg(not(feature = "vabamorf"))]
         {
@@ -459,7 +459,7 @@ fn rs_substring_tag(
     };
 
     let strategy = conflict_resolver.parse::<ConflictStrategy>()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let config = TaggerConfig {
         output_layer: "substrings".to_string(),
@@ -476,7 +476,7 @@ fn rs_substring_tag(
     };
 
     let tagger = SubstringTagger::new(rules, token_separators, config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let result = tagger.tag(text);
 
@@ -536,7 +536,7 @@ impl PySpanTagger {
         }
 
         let strategy = conflict_resolver.parse::<ConflictStrategy>()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         let config = SpanTaggerConfig {
             output_layer: output_layer.to_string(),
@@ -552,7 +552,7 @@ impl PySpanTagger {
         };
 
         let tagger = SpanTagger::new(rules, config)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         Ok(Self { inner: tagger })
     }
@@ -700,7 +700,7 @@ fn rs_span_tag(
     }
 
     let strategy = conflict_resolver.parse::<ConflictStrategy>()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let config = SpanTaggerConfig {
         output_layer: "spans".to_string(),
@@ -716,7 +716,7 @@ fn rs_span_tag(
     };
 
     let tagger = SpanTagger::new(rules, config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let input = parse_tag_result(input_layer)?;
     let result = tagger.tag(&input);
@@ -816,7 +816,7 @@ impl PyPhraseTagger {
         }
 
         let strategy = conflict_resolver.parse::<ConflictStrategy>()
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         let config = PhraseTaggerConfig {
             output_layer: output_layer.to_string(),
@@ -833,7 +833,7 @@ impl PyPhraseTagger {
         };
 
         let tagger = PhraseTagger::new(rules, config)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+            ?;
 
         Ok(Self { inner: tagger })
     }
@@ -918,7 +918,7 @@ fn rs_phrase_tag(
     }
 
     let strategy = conflict_resolver.parse::<ConflictStrategy>()
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let config = PhraseTaggerConfig {
         output_layer: "phrases".to_string(),
@@ -935,7 +935,7 @@ fn rs_phrase_tag(
     };
 
     let tagger = PhraseTagger::new(rules, config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     let input = parse_tag_result(input_layer)?;
     let result = tagger.tag(&input);
@@ -1031,7 +1031,7 @@ fn rs_load_rules_csv(
     };
 
     let rules = csv_loader::load_rules_from_csv(file_path, &config)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
+        ?;
 
     csv_rules_to_pylist(py, &rules)
 }
@@ -1064,7 +1064,7 @@ fn rs_string_list_pattern(
     let repl = replacements.unwrap_or_default();
     let flags_ref = ignore_case_flags.as_deref();
     string_list::build_string_list_pattern(&strings, &repl, ignore_case, flags_ref)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        .map_err(PyErr::from)
 }
 
 /// Build a regex choice group (alternation) from multiple regex patterns.
@@ -1081,7 +1081,7 @@ fn rs_string_list_pattern(
 #[pyfunction]
 fn rs_choice_group_pattern(patterns: Vec<String>) -> PyResult<String> {
     string_list::build_choice_group_pattern(&patterns)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        .map_err(PyErr::from)
 }
 
 /// Merge multiple string lists into a single choice group with longest-first sorting.
@@ -1115,7 +1115,7 @@ fn rs_merged_string_lists_pattern(
     let repl = replacements.unwrap_or_default();
     let flags_ref = ignore_case_flags_per_list.as_deref();
     string_list::build_merged_string_lists_pattern(&string_lists, &repl, ignore_case, flags_ref)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        .map_err(PyErr::from)
 }
 
 /// Build a regex pattern from a template with named placeholders.
@@ -1149,7 +1149,7 @@ fn rs_merged_string_lists_pattern(
 #[pyfunction]
 fn rs_regex_pattern(template: &str, components: HashMap<String, String>) -> PyResult<String> {
     string_list::build_regex_pattern(template, &components)
-        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+        .map_err(PyErr::from)
 }
 
 // ── Vabamorf integration (feature-gated) ─────────────────────────────────────

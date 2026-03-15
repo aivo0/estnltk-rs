@@ -1,4 +1,5 @@
 use crate::substring_tagger::SubstringRule;
+use crate::types::TaggerError;
 use vabamorf_rs::Vabamorf;
 
 /// The 14 Estonian noun cases (abbreviation, full name).
@@ -26,19 +27,19 @@ pub const ESTONIAN_NOUN_CASES: [(&str, &str); 14] = [
 /// with `", "` to match EstNLTK's `noun_forms_expander` behavior.
 ///
 /// Returns a Vec of 28 strings. Some may be empty if synthesis produces no results.
-pub fn noun_forms_expander(vm: &mut Vabamorf, word: &str) -> Result<Vec<String>, String> {
+pub fn noun_forms_expander(vm: &mut Vabamorf, word: &str) -> Result<Vec<String>, TaggerError> {
     let mut expanded = Vec::with_capacity(28);
     for &(case_abbr, _) in &ESTONIAN_NOUN_CASES {
         let sg_form = format!("sg {}", case_abbr);
         let sg_results = vm
             .synthesize(word, &sg_form, "S", "", true, false)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TaggerError::Config(e.to_string()))?;
         expanded.push(sg_results.join(", "));
 
         let pl_form = format!("pl {}", case_abbr);
         let pl_results = vm
             .synthesize(word, &pl_form, "S", "", true, false)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| TaggerError::Config(e.to_string()))?;
         expanded.push(pl_results.join(", "));
     }
     Ok(expanded)
@@ -48,7 +49,7 @@ pub fn noun_forms_expander(vm: &mut Vabamorf, word: &str) -> Result<Vec<String>,
 ///
 /// Matches EstNLTK's `default_expander` which has a TODO to auto-detect
 /// noun vs verb and dispatch accordingly.
-pub fn default_expander(vm: &mut Vabamorf, word: &str) -> Result<Vec<String>, String> {
+pub fn default_expander(vm: &mut Vabamorf, word: &str) -> Result<Vec<String>, TaggerError> {
     noun_forms_expander(vm, word)
 }
 
@@ -63,11 +64,13 @@ pub fn expand_rules(
     expander_name: &str,
     vm: &mut Vabamorf,
     lowercase: bool,
-) -> Result<Vec<SubstringRule>, String> {
+) -> Result<Vec<SubstringRule>, TaggerError> {
     let expander_fn = match expander_name {
         "noun_forms" => noun_forms_expander,
         "default" => default_expander,
-        other => return Err(format!("Unknown expander: '{}'. Use 'noun_forms' or 'default'", other)),
+        other => return Err(TaggerError::Config(format!(
+            "Unknown expander: '{}'. Use 'noun_forms' or 'default'", other
+        ))),
     };
 
     let mut expanded_rules = Vec::new();
@@ -178,7 +181,7 @@ mod tests {
         }];
         let result = expand_rules(rules, "unknown", &mut vm, false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown expander"));
+        assert!(result.unwrap_err().to_string().contains("Unknown expander"));
     }
 
     #[test]

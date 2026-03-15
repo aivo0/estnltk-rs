@@ -112,8 +112,13 @@ pub fn keep_minimal_matches(sorted: &[MatchEntry]) -> Vec<MatchEntry> {
 /// For overlapping spans in the same group, remove the one with higher
 /// priority number (lower precedence).
 ///
-/// Direct port of `conflict_priority_resolver` from helper_methods.py.
-/// O(n^2) matching Python behavior.
+/// Based on `conflict_priority_resolver` from helper_methods.py.
+/// Input must be sorted by (start ASC, end ASC).
+///
+/// Uses early termination on the forward scan: since entries are sorted
+/// by start, once `sorted[j].start >= sorted[i].end` no further j can
+/// overlap entry i. This makes the average case O(n * k) where k is
+/// the number of overlapping entries, rather than O(n^2).
 pub fn conflict_priority_resolver(
     sorted: &[MatchEntry],
     groups: &[i32],    // group for each entry
@@ -129,23 +134,50 @@ pub fn conflict_priority_resolver(
         if deleted[i] {
             continue;
         }
-        for j in 0..n {
-            if i == j || deleted[j] {
+        let a = &sorted[i].0;
+
+        // Backward pass: check entries before i that might overlap.
+        for j in (0..i).rev() {
+            if deleted[j] {
                 continue;
             }
-            // Same group?
+            // Since entries are sorted by start, sorted[j].start <= a.start.
+            // Overlap requires sorted[j].end > a.start (the span extends past i's start).
+            // If sorted[j].end <= a.start, this entry doesn't overlap, but earlier
+            // entries might still have longer spans, so we can't break.
+            let b = &sorted[j].0;
+            if b.end <= a.start {
+                continue;
+            }
             if groups[i] != groups[j] {
                 continue;
             }
-            // Overlapping? (start1 <= end2 && end1 >= start2)
-            let a = &sorted[i].0;
-            let b = &sorted[j].0;
-            if a.start <= b.end && a.end >= b.start {
-                // Remove the one with higher priority number
-                if priorities[i] > priorities[j] {
-                    deleted[i] = true;
-                    break;
-                }
+            if priorities[i] > priorities[j] {
+                deleted[i] = true;
+                break;
+            }
+        }
+        if deleted[i] {
+            continue;
+        }
+
+        // Forward pass: check entries after i that might overlap.
+        // Break early when no further overlap is possible.
+        for j in (i + 1)..n {
+            // Since entries are sorted by start, once sorted[j].start >= a.end,
+            // no further j can overlap entry i.
+            if sorted[j].0.start >= a.end {
+                break;
+            }
+            if deleted[j] {
+                continue;
+            }
+            if groups[i] != groups[j] {
+                continue;
+            }
+            if priorities[i] > priorities[j] {
+                deleted[i] = true;
+                break;
             }
         }
     }
