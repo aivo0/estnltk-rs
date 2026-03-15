@@ -50,7 +50,7 @@ impl RegexTagger {
         let resolved = self.resolve_conflicts(&all_matches);
 
         // Step 4: Build TagResult.
-        self.build_result(&resolved)
+        self.build_result(&resolved, &raw_text)
     }
 
     /// Extract raw matches from all rules, converting byte→char offsets.
@@ -234,7 +234,10 @@ impl RegexTagger {
     }
 
     /// Build the final TagResult from resolved matches.
-    fn build_result(&self, resolved: &[MatchEntry]) -> TagResult {
+    ///
+    /// `text` is the (possibly lowercased) text that was matched against,
+    /// used to extract matched substrings when `match_attribute` is set.
+    fn build_result(&self, resolved: &[MatchEntry], text: &str) -> TagResult {
         // Group consecutive matches at the same span (for ambiguous layers).
         let mut spans: Vec<TaggedSpan> = Vec::new();
 
@@ -245,6 +248,18 @@ impl RegexTagger {
             // Copy static attributes from rule.
             for (k, v) in &rule.attributes {
                 annotation.0.insert(k.clone(), v.clone());
+            }
+
+            // Optionally store matched text substring.
+            if let Some(ref attr_name) = self.config.match_attribute {
+                let matched_text: String = text
+                    .chars()
+                    .skip(match_span.start)
+                    .take(match_span.end - match_span.start)
+                    .collect();
+                annotation
+                    .0
+                    .insert(attr_name.clone(), AnnotationValue::Str(matched_text));
             }
 
             // Optionally add group/priority/pattern attributes.
@@ -370,6 +385,7 @@ mod tests {
             ambiguous_output_layer: true,
             unique_patterns: false,
             overlapped: false,
+            match_attribute: None,
         }
     }
 
@@ -957,5 +973,132 @@ mod tests {
         let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
         let result = tagger.tag("aaa");
         assert_eq!(result.spans.len(), 3);
+    }
+
+    // ── match_attribute tests ────────────────────────────────────────
+
+    #[test]
+    fn test_match_attribute_basic() {
+        // Stores matched text under the configured attribute name.
+        let rule = make_rule("[0-9]+", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.match_attribute = Some("match".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("abc 123 def 456");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("123".to_string()))
+        );
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("456".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_match_attribute_with_capture_group() {
+        // When group > 0, match text should be the capture group text.
+        let rule = make_rule(r"(\d+) EUR", HashMap::new(), 1, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.match_attribute = Some("match".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("Hind: 100 EUR ja 250 EUR");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("100".to_string()))
+        );
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("250".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_match_attribute_estonian_multibyte() {
+        // Matched text with Estonian characters is extracted correctly.
+        let rule = make_rule(r"\w+maa", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.match_attribute = Some("matched".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("Tere Põltsamaa ja Võrumaa");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("matched"),
+            Some(&AnnotationValue::Str("Põltsamaa".to_string()))
+        );
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("matched"),
+            Some(&AnnotationValue::Str("Võrumaa".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_match_attribute_with_lowercase() {
+        // When lowercase_text=true, match text comes from the lowercased input.
+        let rule = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.lowercase_text = true;
+        cfg.match_attribute = Some("match".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("HELLO world");
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("hello".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_match_attribute_with_other_attributes() {
+        // match_attribute coexists with static rule attributes.
+        let mut attrs = HashMap::new();
+        attrs.insert("type".to_string(), AnnotationValue::Str("email".to_string()));
+        let rule = make_rule(r"\S+@\S+", attrs, 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+        cfg.match_attribute = Some("match".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("contact user@example.com today");
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("type"),
+            Some(&AnnotationValue::Str("email".to_string()))
+        );
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("user@example.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_match_attribute_none_disabled() {
+        // When match_attribute is None (default), no match text is stored.
+        let rule = make_rule("hello", HashMap::new(), 0, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("hello");
+        assert_eq!(result.spans.len(), 1);
+        assert!(result.spans[0].annotations[0].0.get("match").is_none());
+    }
+
+    #[test]
+    fn test_match_attribute_overlapped() {
+        // Overlapping matches each store their own matched text.
+        let rule = make_rule("aa", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.overlapped = true;
+        cfg.match_attribute = Some("match".to_string());
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("aaa");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("aa".to_string()))
+        );
+        assert_eq!(
+            result.spans[1].annotations[0].0.get("match"),
+            Some(&AnnotationValue::Str("aa".to_string()))
+        );
     }
 }

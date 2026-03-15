@@ -205,6 +205,11 @@ pub struct TaggerConfig {
     /// `RegexTagger(overlapped=True)` / Python `regex.finditer(overlapped=True)`.
     /// Default `false`.
     pub overlapped: bool,
+    /// When set, each annotation will include the matched text substring
+    /// under this attribute name.  Rust equivalent of EstNLTK's
+    /// `match_attribute` parameter — stores a plain `String` instead of
+    /// Python's `re.Match` object.  Default `None` (disabled).
+    pub match_attribute: Option<String>,
 }
 
 /// Check if rules have inconsistent attribute sets.

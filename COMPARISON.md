@@ -52,7 +52,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | `overlapped` | bool, default `False` | bool, default `false` | **Full** | Iterative re-search from `start+1` after each match to find overlaps |
 | `lowercase_text` | bool, default `False` | bool, default `false` | **Full** | |
 | `decorator` (global) | `Callable[[Text, ElementaryBaseSpan, Dict], Optional[Dict]]` | — | **None** | Python callables can't run in Rust |
-| `match_attribute` | str, default `'match'`; stores `re.Match` object | — | **None** | resharp returns byte ranges, no `Match` object |
+| `match_attribute` | str, default `'match'`; stores `re.Match` object | `Option<String>`, default `None`; stores matched text substring | **Partial** | Rust stores the matched text `String` instead of a `re.Match` object. Opt-in (default `None`), unlike EstNLTK which defaults to `'match'` |
 | `group_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `priority_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
 | `pattern_attribute` | str, default `None` | `Option<String>`, default `None` | **Full** | |
@@ -115,7 +115,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | Stage | EstNLTK | estnltk-rs | Coverage |
 |-------|---------|------------|----------|
 | 1. Static attributes from rule | Copied into annotation dict | Copied into annotation `HashMap` | **Full** |
-| 2. `match` attribute added | `re.Match` object stored under `match_attribute` name | — | **None** |
+| 2. `match` attribute added | `re.Match` object stored under `match_attribute` name | Matched text `String` stored under `match_attribute` name (when set) | **Partial** |
 | 3. Global decorator applied | `decorator(text_obj, base_span, annotation_dict) -> dict or None` | — | **None** |
 | 4. Dynamic decorator applied | Per `(group, priority)` key: `decorator(text_obj, base_span, annotation_dict)` | — | **None** |
 | 5. Drop if decorator returns `None` | Span removed from output | — | **N/A** |
@@ -124,6 +124,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 **Notes:**
 - Decorators are the primary extensibility mechanism in EstNLTK's rule taggers. They allow runtime modification of annotations based on context (surrounding text, morphological analysis, etc.).
 - The Rust side produces static annotations only. Decorators can be applied Python-side on the Rust output as a post-processing step.
+- `match_attribute`: EstNLTK stores a `re.Match` object (with `.group()`, `.span()`, etc.). The Rust equivalent stores the matched text `String` — sufficient for the most common use case (inspecting what was matched). When `group > 0`, the stored text is the capture group's text, not the full match. When `lowercase_text=true`, the stored text comes from the lowercased input.
 
 ---
 
@@ -294,6 +295,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `tests/test_csv_loader.rs` (5 tests) + `src/csv_loader.rs` (10 unit tests) |
 | Capture group extraction | Implicit (group parameter in rules) | 13 unit tests + 2 integration tests (basic, multibyte, mixed rules, error cases) |
 | Overlapped matching | Implicit in existing test suite | 10 unit tests (basic, multibyte, capture groups, conflict resolution, attributes) |
+| Match attribute | Implicit in existing test suite | 7 unit tests (basic, capture groups, multibyte, lowercase, with attributes, disabled, overlapped) |
 | StringList pattern composition | `StringList` class tests | `src/string_list.rs` (16 unit tests) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
@@ -307,18 +309,20 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Category | Full | Partial | None |
 |----------|------|---------|------|
 | Tagger types (4) | 0 | 2 | 2 |
-| RegexTagger parameters (11) | 7 | 1 | 3 |
+| RegexTagger parameters (11) | 7 | 2 | 2 |
 | SubstringTagger parameters (12) | 9 | 1 | 2 |
 | Extraction rules (6 features) | 3 | 2 | 1 |
 | Rulesets (7 features) | 2 | 4 | 1 |
 | Conflict strategies (7) | 6 | 0 | 1 |
-| Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
+| Decorator pipeline (6 stages) | 2 | 1 | 2 (+1 N/A) |
 | Helper functions (6) | 3 | 0 | 2 (+1 N/A) |
 | Regex library classes (4) | 0 | 1 | 3 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 141 Rust tests total (108 unit + 33 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 148 Rust tests total (115 unit + 33 integration).
 
 **Biggest gaps:** Decorators (global and dynamic), other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
 
-**By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
+**By design, not ported:** Features tied to Python runtime (decorators, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).
+
+**Partial equivalents:** `match_attribute` stores the matched text `String` instead of Python's `re.Match` object — opt-in via `match_attribute` parameter (default `None`), covering the most common use case (inspecting matched text) without Python-specific match objects.
