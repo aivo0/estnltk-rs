@@ -19,13 +19,16 @@ use pyo3::types::{PyDict, PyList};
 
 use csv_loader::{ColumnRef, CsvLoadConfig, CsvRule};
 use phrase_tagger::{make_phrase_rule, PhraseTagger, PhraseTaggerConfig};
-use span_tagger::{make_span_rule, SpanTagger, SpanTaggerConfig};
-use substring_tagger::{make_substring_rule, SubstringTagger};
+use span_tagger::{SpanRule, SpanTagger, SpanTaggerConfig};
+use substring_tagger::{SubstringRule, SubstringTagger};
 use tagger::{make_rule, RegexTagger};
 use types::*;
 
-/// Parse a Python pattern dict into an ExtractionRule.
-fn parse_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<ExtractionRule> {
+/// Extract common fields (pattern, attributes, group, priority) from a Python
+/// pattern dict.  Shared by all `parse_*_pattern_dict` functions.
+fn parse_pattern_fields(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<(String, HashMap<String, AnnotationValue>, u32, i32)> {
     let pattern: String = dict
         .get_item("pattern")?
         .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'pattern' key required"))?
@@ -52,6 +55,12 @@ fn parse_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<ExtractionRule> {
         }
     }
 
+    Ok((pattern, attributes, group, priority))
+}
+
+/// Parse a Python pattern dict into an ExtractionRule.
+fn parse_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<ExtractionRule> {
+    let (pattern, attributes, group, priority) = parse_pattern_fields(dict)?;
     make_rule(&pattern, attributes, group, priority)
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
 }
@@ -253,36 +262,9 @@ fn rs_regex_tag(
 }
 
 /// Parse a Python pattern dict into a SubstringRule.
-fn parse_substring_pattern_dict(
-    dict: &Bound<'_, PyDict>,
-) -> PyResult<substring_tagger::SubstringRule> {
-    let pattern: String = dict
-        .get_item("pattern")?
-        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'pattern' key required"))?
-        .extract()?;
-
-    let group: u32 = dict
-        .get_item("group")?
-        .map(|v| v.extract())
-        .unwrap_or(Ok(0))?;
-
-    let priority: i32 = dict
-        .get_item("priority")?
-        .map(|v| v.extract())
-        .unwrap_or(Ok(0))?;
-
-    let mut attributes = HashMap::new();
-    if let Some(attrs_obj) = dict.get_item("attributes")? {
-        if let Ok(attrs_dict) = attrs_obj.downcast::<PyDict>() {
-            for (k, v) in attrs_dict.iter() {
-                let key: String = k.extract()?;
-                let val = AnnotationValue::from_pyobject(&v)?;
-                attributes.insert(key, val);
-            }
-        }
-    }
-
-    Ok(make_substring_rule(&pattern, attributes, group, priority))
+fn parse_substring_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<SubstringRule> {
+    let (pattern, attributes, group, priority) = parse_pattern_fields(dict)?;
+    Ok(SubstringRule::new(&pattern, attributes, group, priority))
 }
 
 /// Python-exposed SubstringTagger class.
@@ -513,36 +495,9 @@ fn rs_substring_tag(
 }
 
 /// Parse a Python pattern dict into a SpanRule.
-fn parse_span_pattern_dict(
-    dict: &Bound<'_, PyDict>,
-) -> PyResult<span_tagger::SpanRule> {
-    let pattern: String = dict
-        .get_item("pattern")?
-        .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'pattern' key required"))?
-        .extract()?;
-
-    let group: u32 = dict
-        .get_item("group")?
-        .map(|v| v.extract())
-        .unwrap_or(Ok(0))?;
-
-    let priority: i32 = dict
-        .get_item("priority")?
-        .map(|v| v.extract())
-        .unwrap_or(Ok(0))?;
-
-    let mut attributes = HashMap::new();
-    if let Some(attrs_obj) = dict.get_item("attributes")? {
-        if let Ok(attrs_dict) = attrs_obj.downcast::<PyDict>() {
-            for (k, v) in attrs_dict.iter() {
-                let key: String = k.extract()?;
-                let val = AnnotationValue::from_pyobject(&v)?;
-                attributes.insert(key, val);
-            }
-        }
-    }
-
-    Ok(make_span_rule(&pattern, attributes, group, priority))
+fn parse_span_pattern_dict(dict: &Bound<'_, PyDict>) -> PyResult<SpanRule> {
+    let (pattern, attributes, group, priority) = parse_pattern_fields(dict)?;
+    Ok(SpanRule::new(&pattern, attributes, group, priority))
 }
 
 /// Python-exposed SpanTagger class.
@@ -607,9 +562,12 @@ impl PySpanTagger {
     /// The input must be a dict with the same format as returned by
     /// `RsRegexTagger.tag()` or `RsSubstringTagger.tag()`:
     /// `{"name": ..., "attributes": [...], "ambiguous": ..., "spans": [...]}`
+    ///
+    /// Uses `tag_from_py` to iterate Python spans directly without
+    /// materializing a full `TagResult`, extracting only the `input_attribute`
+    /// value from each annotation.
     fn tag(&self, py: Python<'_>, input_layer: &Bound<'_, PyDict>) -> PyResult<PyObject> {
-        let input = parse_tag_result(input_layer)?;
-        let result = self.inner.tag(&input);
+        let result = self.inner.tag_from_py(input_layer)?;
         result.to_pydict(py)
     }
 

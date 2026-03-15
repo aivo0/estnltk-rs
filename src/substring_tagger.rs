@@ -3,12 +3,12 @@ use std::collections::HashMap;
 use aho_corasick::AhoCorasick;
 
 use crate::byte_char::byte_to_char_map;
-use crate::conflict::{
-    conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches,
-};
+use crate::conflict::resolve_conflicts;
+#[cfg(test)]
+use crate::types::ConflictStrategy;
 use crate::types::{
-    check_unique_patterns, has_missing_attributes, normalize_annotation, Annotation,
-    AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggedSpan, TaggerConfig,
+    assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
+    has_missing_attributes, AnnotationValue, MatchSpan, TagResult, TaggerConfig, TaggerRule,
 };
 
 /// A substring extraction rule — pattern string with static attributes.
@@ -19,6 +19,37 @@ pub struct SubstringRule {
     pub attributes: HashMap<String, AnnotationValue>,
     pub group: u32,
     pub priority: i32,
+}
+
+impl SubstringRule {
+    pub fn new(
+        pattern: &str,
+        attributes: HashMap<String, AnnotationValue>,
+        group: u32,
+        priority: i32,
+    ) -> Self {
+        Self {
+            pattern_str: pattern.to_string(),
+            attributes,
+            group,
+            priority,
+        }
+    }
+}
+
+impl TaggerRule for SubstringRule {
+    fn pattern_str(&self) -> &str {
+        &self.pattern_str
+    }
+    fn attributes(&self) -> &HashMap<String, AnnotationValue> {
+        &self.attributes
+    }
+    fn group(&self) -> u32 {
+        self.group
+    }
+    fn priority(&self) -> i32 {
+        self.priority
+    }
 }
 
 /// The core substring tagger — Rust equivalent of EstNLTK's `SubstringTagger`.
@@ -101,7 +132,14 @@ impl SubstringTagger {
         all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
 
         // Step 3: Apply conflict resolution on unique spans.
-        let resolved = self.resolve_conflicts(&all_matches);
+        let resolved = resolve_conflicts(
+            self.config.conflict_strategy,
+            &all_matches,
+            |pattern_id| {
+                let first_rule = self.pattern_to_rules[pattern_id][0];
+                (self.rules[first_rule].group as i32, self.rules[first_rule].priority)
+            },
+        );
 
         // Step 4: Build TagResult, fanning out to all rules per pattern.
         self.build_result(&resolved)
@@ -155,109 +193,29 @@ impl SubstringTagger {
         matches
     }
 
-    /// Apply the configured conflict resolution strategy.
-    /// Operates on (span, pattern_id) entries — one per unique AC match.
-    fn resolve_conflicts(&self, sorted: &[(MatchSpan, usize)]) -> Vec<(MatchSpan, usize)> {
-        match self.config.conflict_strategy {
-            ConflictStrategy::KeepAll => sorted.to_vec(),
-            ConflictStrategy::KeepMaximal => keep_maximal_matches(sorted),
-            ConflictStrategy::KeepMinimal => keep_minimal_matches(sorted),
-            ConflictStrategy::KeepAllExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                conflict_priority_resolver(sorted, &groups, &priorities)
-            }
-            ConflictStrategy::KeepMaximalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_maximal_matches(&after_priority)
-            }
-            ConflictStrategy::KeepMinimalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_minimal_matches(&after_priority)
-            }
-        }
-    }
-
-    /// Extract group and priority arrays for the priority resolver.
-    /// Uses the first rule's group/priority for each pattern.
-    fn extract_group_priority(&self, entries: &[(MatchSpan, usize)]) -> (Vec<i32>, Vec<i32>) {
-        let groups: Vec<i32> = entries
-            .iter()
-            .map(|(_, pattern_id)| {
-                let first_rule = self.pattern_to_rules[*pattern_id][0];
-                self.rules[first_rule].group as i32
-            })
-            .collect();
-        let priorities: Vec<i32> = entries
-            .iter()
-            .map(|(_, pattern_id)| {
-                let first_rule = self.pattern_to_rules[*pattern_id][0];
-                self.rules[first_rule].priority
-            })
-            .collect();
-        (groups, priorities)
-    }
-
     /// Build the final TagResult from resolved matches.
     /// Fans out each (span, pattern_id) to all rules sharing that pattern.
     fn build_result(&self, resolved: &[(MatchSpan, usize)]) -> TagResult {
-        let mut spans: Vec<TaggedSpan> = Vec::new();
-
-        for &(match_span, pattern_id) in resolved {
-            for &rule_idx in &self.pattern_to_rules[pattern_id] {
-                let rule = &self.rules[rule_idx];
-                let mut annotation = Annotation::new();
-
-                // Copy static attributes from rule.
-                for (k, v) in &rule.attributes {
-                    annotation.0.insert(k.clone(), v.clone());
-                }
-
-                // Optionally add group/priority/pattern attributes.
-                if let Some(ref attr_name) = self.config.group_attribute {
-                    annotation
-                        .0
-                        .insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
-                }
-                if let Some(ref attr_name) = self.config.priority_attribute {
-                    annotation
-                        .0
-                        .insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
-                }
-                if let Some(ref attr_name) = self.config.pattern_attribute {
-                    annotation.0.insert(
-                        attr_name.clone(),
-                        AnnotationValue::Str(rule.pattern_str.clone()),
+        let entries = resolved.iter().flat_map(|&(match_span, pattern_id)| {
+            self.pattern_to_rules[pattern_id]
+                .iter()
+                .map(move |&rule_idx| {
+                    let annotation = build_rule_annotation(
+                        &self.rules[rule_idx],
+                        &self.config.output_attributes,
+                        self.config.group_attribute.as_deref(),
+                        self.config.priority_attribute.as_deref(),
+                        self.config.pattern_attribute.as_deref(),
                     );
-                }
-
-                // Normalize: fill missing output_attributes with Null.
-                normalize_annotation(&mut annotation, &self.config.output_attributes);
-
-                // Merge into existing span or create new one.
-                if let Some(last) = spans.last_mut() {
-                    if last.span == match_span {
-                        // Non-ambiguous: keep only the first annotation per span.
-                        if self.config.ambiguous_output_layer {
-                            last.annotations.push(annotation);
-                        }
-                        continue;
-                    }
-                }
-                spans.push(TaggedSpan {
-                    span: match_span,
-                    annotations: vec![annotation],
-                });
-            }
-        }
-
-        TagResult {
-            name: self.config.output_layer.clone(),
-            attributes: self.config.output_attributes.clone(),
-            ambiguous: self.config.ambiguous_output_layer,
-            spans,
-        }
+                    (match_span, annotation)
+                })
+        });
+        assemble_tag_result(
+            entries,
+            &self.config.output_layer,
+            &self.config.output_attributes,
+            self.config.ambiguous_output_layer,
+        )
     }
 
     /// Check if rules have inconsistent attribute sets.
@@ -276,31 +234,7 @@ impl SubstringTagger {
     /// Groups rules by their pattern string, so patterns shared by multiple rules
     /// (ambiguous rules) map to multiple indices.
     pub fn rule_map(&self) -> HashMap<String, Vec<usize>> {
-        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, rule) in self.rules.iter().enumerate() {
-            let key = if self.config.lowercase_text {
-                rule.pattern_str.to_lowercase()
-            } else {
-                rule.pattern_str.clone()
-            };
-            map.entry(key).or_default().push(i);
-        }
-        map
-    }
-}
-
-/// Convenience: build a SubstringRule from components.
-pub fn make_substring_rule(
-    pattern: &str,
-    attributes: HashMap<String, AnnotationValue>,
-    group: u32,
-    priority: i32,
-) -> SubstringRule {
-    SubstringRule {
-        pattern_str: pattern.to_string(),
-        attributes,
-        group,
-        priority,
+        compute_rule_map(&self.rules, self.config.lowercase_text)
     }
 }
 
@@ -327,10 +261,10 @@ mod tests {
     #[test]
     fn test_simple_match() {
         let rules = vec![
-            make_substring_rule("first", HashMap::new(), 0, 0),
-            make_substring_rule("firs", HashMap::new(), 0, 0),
-            make_substring_rule("irst", HashMap::new(), 0, 0),
-            make_substring_rule("last", HashMap::new(), 0, 0),
+            SubstringRule::new("first", HashMap::new(), 0, 0),
+            SubstringRule::new("firs", HashMap::new(), 0, 0),
+            SubstringRule::new("irst", HashMap::new(), 0, 0),
+            SubstringRule::new("last", HashMap::new(), 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let result = tagger.tag("first second last");
@@ -342,10 +276,10 @@ mod tests {
     #[test]
     fn test_ignore_case() {
         let rules = vec![
-            make_substring_rule("First", HashMap::new(), 0, 0),
-            make_substring_rule("firs", HashMap::new(), 0, 0),
-            make_substring_rule("irst", HashMap::new(), 0, 0),
-            make_substring_rule("LAST", HashMap::new(), 0, 0),
+            SubstringRule::new("First", HashMap::new(), 0, 0),
+            SubstringRule::new("firs", HashMap::new(), 0, 0),
+            SubstringRule::new("irst", HashMap::new(), 0, 0),
+            SubstringRule::new("LAST", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.lowercase_text = true;
@@ -358,7 +292,7 @@ mod tests {
 
     #[test]
     fn test_separator_pipe() {
-        let rules = vec![make_substring_rule("match", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("match", HashMap::new(), 0, 0)];
         let tagger = SubstringTagger::new(rules, "|", default_config()).unwrap();
         let result = tagger.tag("match|match| match| match| match |match");
         // Valid: "match" at 0..5 (start of text), "match" at 6..11 (|match|), "match" at 34..39 (|match at end)
@@ -370,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_separator_multiple() {
-        let rules = vec![make_substring_rule("match", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("match", HashMap::new(), 0, 0)];
         let tagger = SubstringTagger::new(rules, " ,:", default_config()).unwrap();
         let result = tagger.tag("match match, :match, match");
         assert_eq!(result.spans.len(), 4);
@@ -393,9 +327,9 @@ mod tests {
         a3.insert("b".to_string(), AnnotationValue::Int(5));
 
         let rules = vec![
-            make_substring_rule("first", a1, 0, 0),
-            make_substring_rule("second", a2, 0, 0),
-            make_substring_rule("last", a3, 0, 0),
+            SubstringRule::new("first", a1, 0, 0),
+            SubstringRule::new("second", a2, 0, 0),
+            SubstringRule::new("last", a3, 0, 0),
         ];
         let mut cfg = default_config();
         cfg.output_attributes = vec!["a".to_string(), "b".to_string()];
@@ -419,13 +353,13 @@ mod tests {
     #[test]
     fn test_keep_all() {
         let rules = vec![
-            make_substring_rule("abcd", HashMap::new(), 0, 0),
-            make_substring_rule("abc", HashMap::new(), 0, 0),
-            make_substring_rule("bc", HashMap::new(), 0, 0),
-            make_substring_rule("bcd", HashMap::new(), 0, 0),
-            make_substring_rule("bcde", HashMap::new(), 0, 0),
-            make_substring_rule("f", HashMap::new(), 0, 0),
-            make_substring_rule("ef", HashMap::new(), 0, 0),
+            SubstringRule::new("abcd", HashMap::new(), 0, 0),
+            SubstringRule::new("abc", HashMap::new(), 0, 0),
+            SubstringRule::new("bc", HashMap::new(), 0, 0),
+            SubstringRule::new("bcd", HashMap::new(), 0, 0),
+            SubstringRule::new("bcde", HashMap::new(), 0, 0),
+            SubstringRule::new("f", HashMap::new(), 0, 0),
+            SubstringRule::new("ef", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.conflict_strategy = ConflictStrategy::KeepAll;
@@ -444,13 +378,13 @@ mod tests {
     #[test]
     fn test_keep_maximal() {
         let rules = vec![
-            make_substring_rule("abcd", HashMap::new(), 0, 0),
-            make_substring_rule("abc", HashMap::new(), 0, 0),
-            make_substring_rule("bc", HashMap::new(), 0, 0),
-            make_substring_rule("bcd", HashMap::new(), 0, 0),
-            make_substring_rule("bcde", HashMap::new(), 0, 0),
-            make_substring_rule("f", HashMap::new(), 0, 0),
-            make_substring_rule("ef", HashMap::new(), 0, 0),
+            SubstringRule::new("abcd", HashMap::new(), 0, 0),
+            SubstringRule::new("abc", HashMap::new(), 0, 0),
+            SubstringRule::new("bc", HashMap::new(), 0, 0),
+            SubstringRule::new("bcd", HashMap::new(), 0, 0),
+            SubstringRule::new("bcde", HashMap::new(), 0, 0),
+            SubstringRule::new("f", HashMap::new(), 0, 0),
+            SubstringRule::new("ef", HashMap::new(), 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let result = tagger.tag("abcdea--efg");
@@ -463,13 +397,13 @@ mod tests {
     #[test]
     fn test_keep_minimal() {
         let rules = vec![
-            make_substring_rule("abcd", HashMap::new(), 0, 0),
-            make_substring_rule("abc", HashMap::new(), 0, 0),
-            make_substring_rule("bc", HashMap::new(), 0, 0),
-            make_substring_rule("bcd", HashMap::new(), 0, 0),
-            make_substring_rule("bcde", HashMap::new(), 0, 0),
-            make_substring_rule("f", HashMap::new(), 0, 0),
-            make_substring_rule("ef", HashMap::new(), 0, 0),
+            SubstringRule::new("abcd", HashMap::new(), 0, 0),
+            SubstringRule::new("abc", HashMap::new(), 0, 0),
+            SubstringRule::new("bc", HashMap::new(), 0, 0),
+            SubstringRule::new("bcd", HashMap::new(), 0, 0),
+            SubstringRule::new("bcde", HashMap::new(), 0, 0),
+            SubstringRule::new("f", HashMap::new(), 0, 0),
+            SubstringRule::new("ef", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.conflict_strategy = ConflictStrategy::KeepMinimal;
@@ -483,7 +417,7 @@ mod tests {
     #[test]
     fn test_estonian_multibyte() {
         // "öö" in "Tüüpiline öökülma näide"
-        let rules = vec![make_substring_rule("öö", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("öö", HashMap::new(), 0, 0)];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let result = tagger.tag("Tüüpiline öökülma näide");
         assert_eq!(result.spans.len(), 1);
@@ -492,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_no_match() {
-        let rules = vec![make_substring_rule("xyz", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("xyz", HashMap::new(), 0, 0)];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let result = tagger.tag("hello world");
         assert_eq!(result.spans.len(), 0);
@@ -500,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_empty_text() {
-        let rules = vec![make_substring_rule("hello", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("hello", HashMap::new(), 0, 0)];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let result = tagger.tag("");
         assert_eq!(result.spans.len(), 0);
@@ -514,8 +448,8 @@ mod tests {
         a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
 
         let rules = vec![
-            make_substring_rule("Washington", a1, 0, 0),
-            make_substring_rule("Washington", a2, 0, 0),
+            SubstringRule::new("Washington", a1, 0, 0),
+            SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
         cfg.output_attributes = vec!["type".to_string()];
@@ -532,8 +466,8 @@ mod tests {
         let mut a2 = HashMap::new();
         a2.insert("type".to_string(), AnnotationValue::Str("y".to_string()));
         let rules = vec![
-            make_substring_rule("hello", a1, 0, 0),
-            make_substring_rule("world", a2, 0, 0),
+            SubstringRule::new("hello", a1, 0, 0),
+            SubstringRule::new("world", a2, 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         assert!(!tagger.missing_attributes());
@@ -547,8 +481,8 @@ mod tests {
         let mut a2 = HashMap::new();
         a2.insert("type".to_string(), AnnotationValue::Str("y".to_string()));
         let rules = vec![
-            make_substring_rule("hello", a1, 0, 0),
-            make_substring_rule("world", a2, 0, 0),
+            SubstringRule::new("hello", a1, 0, 0),
+            SubstringRule::new("world", a2, 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         assert!(tagger.missing_attributes());
@@ -563,8 +497,8 @@ mod tests {
         a2.insert("type".to_string(), AnnotationValue::Str("noun".to_string()));
 
         let rules = vec![
-            make_substring_rule("hello", a1, 0, 0),
-            make_substring_rule("world", a2, 0, 0),
+            SubstringRule::new("hello", a1, 0, 0),
+            SubstringRule::new("world", a2, 0, 0),
         ];
         let mut cfg = default_config();
         cfg.output_attributes = vec!["type".to_string(), "score".to_string()];
@@ -597,8 +531,8 @@ mod tests {
         a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
 
         let rules = vec![
-            make_substring_rule("Washington", a1, 0, 0),
-            make_substring_rule("Washington", a2, 0, 0),
+            SubstringRule::new("Washington", a1, 0, 0),
+            SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
         cfg.output_attributes = vec!["type".to_string()];
@@ -624,8 +558,8 @@ mod tests {
         a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
 
         let rules = vec![
-            make_substring_rule("Washington", a1, 0, 0),
-            make_substring_rule("Washington", a2, 0, 0),
+            SubstringRule::new("Washington", a1, 0, 0),
+            SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
         cfg.output_attributes = vec!["type".to_string()];
@@ -640,8 +574,8 @@ mod tests {
     #[test]
     fn test_unique_patterns_rejects_duplicate() {
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.unique_patterns = true;
@@ -653,8 +587,8 @@ mod tests {
     #[test]
     fn test_unique_patterns_allows_distinct() {
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("world", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("world", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.unique_patterns = true;
@@ -666,8 +600,8 @@ mod tests {
     fn test_unique_patterns_case_insensitive_duplicate() {
         // "Hello" and "hello" collapse when lowercase_text=true.
         let rules = vec![
-            make_substring_rule("Hello", HashMap::new(), 0, 0),
-            make_substring_rule("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("Hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.unique_patterns = true;
@@ -681,8 +615,8 @@ mod tests {
     fn test_unique_patterns_false_allows_duplicates() {
         // Default: duplicates allowed (AmbiguousRuleset semantics).
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let result = SubstringTagger::new(rules, "", default_config());
         assert!(result.is_ok());
@@ -691,8 +625,8 @@ mod tests {
     #[test]
     fn test_pattern_attribute() {
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("world", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("world", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.pattern_attribute = Some("_pattern".to_string());
@@ -714,8 +648,8 @@ mod tests {
     #[test]
     fn test_rule_map_distinct_patterns() {
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("world", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("world", HashMap::new(), 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let map = tagger.rule_map();
@@ -731,8 +665,8 @@ mod tests {
         let mut a2 = HashMap::new();
         a2.insert("type".to_string(), AnnotationValue::Str("name".to_string()));
         let rules = vec![
-            make_substring_rule("Washington", a1, 0, 0),
-            make_substring_rule("Washington", a2, 0, 0),
+            SubstringRule::new("Washington", a1, 0, 0),
+            SubstringRule::new("Washington", a2, 0, 0),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let map = tagger.rule_map();
@@ -743,8 +677,8 @@ mod tests {
     #[test]
     fn test_rule_map_case_insensitive() {
         let rules = vec![
-            make_substring_rule("Hello", HashMap::new(), 0, 0),
-            make_substring_rule("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("Hello", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
         cfg.lowercase_text = true;
@@ -764,9 +698,9 @@ mod tests {
     #[test]
     fn test_rule_map_three_rules_two_patterns() {
         let rules = vec![
-            make_substring_rule("hello", HashMap::new(), 0, 0),
-            make_substring_rule("world", HashMap::new(), 0, 0),
-            make_substring_rule("hello", HashMap::new(), 0, 1),
+            SubstringRule::new("hello", HashMap::new(), 0, 0),
+            SubstringRule::new("world", HashMap::new(), 0, 0),
+            SubstringRule::new("hello", HashMap::new(), 0, 1),
         ];
         let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
         let map = tagger.rule_map();

@@ -1,4 +1,6 @@
-use crate::types::MatchSpan;
+use std::borrow::Cow;
+
+use crate::types::{ConflictStrategy, MatchSpan};
 
 /// Index of the rule that produced a match, used to look up group/priority.
 pub type RuleIndex = usize;
@@ -153,6 +155,58 @@ pub fn conflict_priority_resolver(
         .filter(|(i, _)| !deleted[*i])
         .map(|(_, e)| *e)
         .collect()
+}
+
+/// Unified conflict resolution for all tagger types.
+///
+/// Returns `Cow::Borrowed(sorted)` for `KeepAll` (zero-copy), `Cow::Owned`
+/// for all other strategies.
+///
+/// `group_priority_fn` maps each entry's index field to `(group, priority)`.
+/// The index semantics vary by tagger:
+/// - RegexTagger/SpanTagger: index is a rule index
+/// - SubstringTagger: index is an AC pattern_id
+pub fn resolve_conflicts<'a, F>(
+    strategy: ConflictStrategy,
+    sorted: &'a [MatchEntry],
+    group_priority_fn: F,
+) -> Cow<'a, [MatchEntry]>
+where
+    F: Fn(usize) -> (i32, i32),
+{
+    match strategy {
+        ConflictStrategy::KeepAll => Cow::Borrowed(sorted),
+        ConflictStrategy::KeepMaximal => Cow::Owned(keep_maximal_matches(sorted)),
+        ConflictStrategy::KeepMinimal => Cow::Owned(keep_minimal_matches(sorted)),
+        ConflictStrategy::KeepAllExceptPriority => {
+            let (groups, priorities) = extract_group_priority(sorted, &group_priority_fn);
+            Cow::Owned(conflict_priority_resolver(sorted, &groups, &priorities))
+        }
+        ConflictStrategy::KeepMaximalExceptPriority => {
+            let (groups, priorities) = extract_group_priority(sorted, &group_priority_fn);
+            let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
+            Cow::Owned(keep_maximal_matches(&after_priority))
+        }
+        ConflictStrategy::KeepMinimalExceptPriority => {
+            let (groups, priorities) = extract_group_priority(sorted, &group_priority_fn);
+            let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
+            Cow::Owned(keep_minimal_matches(&after_priority))
+        }
+    }
+}
+
+fn extract_group_priority<F>(entries: &[MatchEntry], f: &F) -> (Vec<i32>, Vec<i32>)
+where
+    F: Fn(usize) -> (i32, i32),
+{
+    let mut groups = Vec::with_capacity(entries.len());
+    let mut priorities = Vec::with_capacity(entries.len());
+    for &(_, idx) in entries {
+        let (g, p) = f(idx);
+        groups.push(g);
+        priorities.push(p);
+    }
+    (groups, priorities)
 }
 
 #[cfg(test)]

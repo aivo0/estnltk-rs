@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use estnltk_regex_rs::span_tagger::{make_span_rule, SpanTagger, SpanTaggerConfig};
+use estnltk_regex_rs::span_tagger::{SpanRule, SpanTagger, SpanTaggerConfig};
 use estnltk_regex_rs::types::{
     Annotation, AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggedSpan,
 };
@@ -41,19 +41,19 @@ fn default_config() -> SpanTaggerConfig {
 #[test]
 fn test_estonian_lemma_vocabulary() {
     let rules = vec![
-        make_span_rule(
+        SpanRule::new(
             "tundma",
             HashMap::from([("value".to_string(), AnnotationValue::Str("T".to_string()))]),
             0,
             1,
         ),
-        make_span_rule(
+        SpanRule::new(
             "päike",
             HashMap::from([("value".to_string(), AnnotationValue::Str("P".to_string()))]),
             0,
             2,
         ),
-        make_span_rule(
+        SpanRule::new(
             "inimene",
             HashMap::from([("value".to_string(), AnnotationValue::Str("K".to_string()))]),
             0,
@@ -97,7 +97,7 @@ fn test_estonian_lemma_vocabulary() {
 #[test]
 fn test_ambiguous_input_one_match() {
     let rules = vec![
-        make_span_rule(
+        SpanRule::new(
             "pank",
             HashMap::from([("value".to_string(), AnnotationValue::Str("finance".to_string()))]),
             0,
@@ -129,7 +129,7 @@ fn test_ambiguous_input_one_match() {
 #[test]
 fn test_estonian_ignore_case() {
     let rules = vec![
-        make_span_rule(
+        SpanRule::new(
             "õun",
             HashMap::from([("value".to_string(), AnnotationValue::Str("fruit".to_string()))]),
             0,
@@ -178,13 +178,13 @@ fn test_pipeline_regex_to_span() {
     };
 
     let rules = vec![
-        make_span_rule(
+        SpanRule::new(
             "word",
             HashMap::from([("category".to_string(), AnnotationValue::Str("text".to_string()))]),
             0,
             0,
         ),
-        make_span_rule(
+        SpanRule::new(
             "email",
             HashMap::from([("category".to_string(), AnnotationValue::Str("contact".to_string()))]),
             0,
@@ -215,8 +215,8 @@ fn test_pipeline_regex_to_span() {
 #[test]
 fn test_conflict_keep_maximal_overlapping() {
     let rules = vec![
-        make_span_rule("a", HashMap::from([("v".to_string(), AnnotationValue::Int(1))]), 0, 0),
-        make_span_rule("b", HashMap::from([("v".to_string(), AnnotationValue::Int(2))]), 0, 0),
+        SpanRule::new("a", HashMap::from([("v".to_string(), AnnotationValue::Int(1))]), 0, 0),
+        SpanRule::new("b", HashMap::from([("v".to_string(), AnnotationValue::Int(2))]), 0, 0),
     ];
 
     let config = SpanTaggerConfig {
@@ -241,7 +241,7 @@ fn test_conflict_keep_maximal_overlapping() {
 #[test]
 fn test_pattern_attribute_recorded() {
     let rules = vec![
-        make_span_rule(
+        SpanRule::new(
             "koer",
             HashMap::from([("v".to_string(), AnnotationValue::Str("dog".to_string()))]),
             0,
@@ -271,7 +271,7 @@ fn test_pattern_attribute_recorded() {
 #[test]
 fn test_empty_input() {
     let rules = vec![
-        make_span_rule("x", HashMap::new(), 0, 0),
+        SpanRule::new("x", HashMap::new(), 0, 0),
     ];
     let tagger = SpanTagger::new(rules, default_config()).unwrap();
 

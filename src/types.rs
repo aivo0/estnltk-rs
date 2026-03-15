@@ -179,6 +179,32 @@ impl std::fmt::Debug for ExtractionRule {
     }
 }
 
+/// Common interface for tagger rules (regex, substring, span).
+///
+/// Allows shared functions (`build_rule_annotation`, `compute_rule_map`, etc.)
+/// to operate on any rule type without knowing its concrete type.
+pub trait TaggerRule {
+    fn pattern_str(&self) -> &str;
+    fn attributes(&self) -> &HashMap<String, AnnotationValue>;
+    fn group(&self) -> u32;
+    fn priority(&self) -> i32;
+}
+
+impl TaggerRule for ExtractionRule {
+    fn pattern_str(&self) -> &str {
+        &self.pattern_str
+    }
+    fn attributes(&self) -> &HashMap<String, AnnotationValue> {
+        &self.attributes
+    }
+    fn group(&self) -> u32 {
+        self.group
+    }
+    fn priority(&self) -> i32 {
+        self.priority
+    }
+}
+
 /// Conflict resolution strategy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictStrategy {
@@ -288,6 +314,103 @@ pub fn normalize_annotation(annotation: &mut Annotation, output_attributes: &[St
             annotation.0.insert(attr_name.clone(), AnnotationValue::Null);
         }
     }
+}
+
+/// Build an annotation from a tagger rule's static attributes and optional metadata.
+///
+/// Copies the rule's attributes into a new annotation, optionally inserts
+/// group/priority/pattern metadata attributes, and normalizes against
+/// `output_attributes` (fills missing keys with `Null`).
+pub fn build_rule_annotation(
+    rule: &impl TaggerRule,
+    output_attributes: &[String],
+    group_attribute: Option<&str>,
+    priority_attribute: Option<&str>,
+    pattern_attribute: Option<&str>,
+) -> Annotation {
+    let mut annotation = Annotation::new();
+    for (k, v) in rule.attributes() {
+        annotation.0.insert(k.clone(), v.clone());
+    }
+    if let Some(attr) = group_attribute {
+        annotation
+            .0
+            .insert(attr.to_string(), AnnotationValue::Int(rule.group() as i64));
+    }
+    if let Some(attr) = priority_attribute {
+        annotation
+            .0
+            .insert(attr.to_string(), AnnotationValue::Int(rule.priority() as i64));
+    }
+    if let Some(attr) = pattern_attribute {
+        annotation.0.insert(
+            attr.to_string(),
+            AnnotationValue::Str(rule.pattern_str().to_string()),
+        );
+    }
+    normalize_annotation(&mut annotation, output_attributes);
+    annotation
+}
+
+/// Assemble a `TagResult` from an iterator of `(span, annotation)` pairs.
+///
+/// Merges annotations for the same span (entries must be sorted by span).
+/// When `ambiguous` is `false`, only the first annotation per span is kept.
+pub fn assemble_tag_result(
+    entries: impl Iterator<Item = (MatchSpan, Annotation)>,
+    output_layer: &str,
+    output_attributes: &[String],
+    ambiguous: bool,
+) -> TagResult {
+    let mut spans: Vec<TaggedSpan> = Vec::new();
+    for (match_span, annotation) in entries {
+        if let Some(last) = spans.last_mut() {
+            if last.span == match_span {
+                if ambiguous {
+                    last.annotations.push(annotation);
+                }
+                continue;
+            }
+        }
+        spans.push(TaggedSpan {
+            span: match_span,
+            annotations: vec![annotation],
+        });
+    }
+    TagResult {
+        name: output_layer.to_string(),
+        attributes: output_attributes.to_vec(),
+        ambiguous,
+        spans,
+    }
+}
+
+/// Build a map from pattern strings to rule indices.
+///
+/// When `case_insensitive` is true, pattern strings are lowercased for
+/// grouping.  Shared implementation for `RegexTagger.rule_map()`,
+/// `SubstringTagger.rule_map()`, and `SpanTagger` constructor.
+pub fn compute_rule_map<R: TaggerRule>(
+    rules: &[R],
+    case_insensitive: bool,
+) -> HashMap<String, Vec<usize>> {
+    let mut map: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, rule) in rules.iter().enumerate() {
+        if case_insensitive {
+            map.entry(rule.pattern_str().to_lowercase())
+                .or_default()
+                .push(i);
+        } else {
+            // Only allocate a String key when the entry doesn't exist yet.
+            match map.get_mut(rule.pattern_str()) {
+                Some(indices) => indices.push(i),
+                None => {
+                    map.insert(rule.pattern_str().to_string(), vec![i]);
+                }
+            }
+        }
+    }
+    map
 }
 
 /// Check for duplicate phrase patterns (tuples of strings).

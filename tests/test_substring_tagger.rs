@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use estnltk_regex_rs::substring_tagger::{make_substring_rule, SubstringTagger};
+use estnltk_regex_rs::substring_tagger::{SubstringRule, SubstringTagger};
 use estnltk_regex_rs::types::*;
 
 fn default_config() -> TaggerConfig {
@@ -23,10 +23,10 @@ fn default_config() -> TaggerConfig {
 #[test]
 fn test_matching_without_separators() {
     let rules = vec![
-        make_substring_rule("first", HashMap::new(), 0, 0),
-        make_substring_rule("firs", HashMap::new(), 0, 0),
-        make_substring_rule("irst", HashMap::new(), 0, 0),
-        make_substring_rule("last", HashMap::new(), 0, 0),
+        SubstringRule::new("first", HashMap::new(), 0, 0),
+        SubstringRule::new("firs", HashMap::new(), 0, 0),
+        SubstringRule::new("irst", HashMap::new(), 0, 0),
+        SubstringRule::new("last", HashMap::new(), 0, 0),
     ];
     let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
     let result = tagger.tag("first second last");
@@ -39,10 +39,10 @@ fn test_matching_without_separators() {
 #[test]
 fn test_matching_ignore_case() {
     let rules = vec![
-        make_substring_rule("First", HashMap::new(), 0, 0),
-        make_substring_rule("firs", HashMap::new(), 0, 0),
-        make_substring_rule("irst", HashMap::new(), 0, 0),
-        make_substring_rule("LAST", HashMap::new(), 0, 0),
+        SubstringRule::new("First", HashMap::new(), 0, 0),
+        SubstringRule::new("firs", HashMap::new(), 0, 0),
+        SubstringRule::new("irst", HashMap::new(), 0, 0),
+        SubstringRule::new("LAST", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
     cfg.lowercase_text = true;
@@ -56,7 +56,7 @@ fn test_matching_ignore_case() {
 /// Mirrors Python test_separator_effect (pipe separator).
 #[test]
 fn test_separator_pipe() {
-    let rules = vec![make_substring_rule("match", HashMap::new(), 0, 0)];
+    let rules = vec![SubstringRule::new("match", HashMap::new(), 0, 0)];
     let tagger = SubstringTagger::new(rules, "|", default_config()).unwrap();
     let result = tagger.tag("match|match| match| match| match |match");
     assert_eq!(result.spans.len(), 3, "Separators not correctly handled");
@@ -68,7 +68,7 @@ fn test_separator_pipe() {
 /// Mirrors Python test_separator_effect (multiple separators).
 #[test]
 fn test_separator_multiple_chars() {
-    let rules = vec![make_substring_rule("match", HashMap::new(), 0, 0)];
+    let rules = vec![SubstringRule::new("match", HashMap::new(), 0, 0)];
     let tagger = SubstringTagger::new(rules, " ,:", default_config()).unwrap();
     let result = tagger.tag("match match, :match, match");
     assert_eq!(result.spans.len(), 4, "Multiple separators do not work");
@@ -92,9 +92,9 @@ fn test_annotations_propagated() {
     a3.insert("b".to_string(), AnnotationValue::Int(5));
 
     let rules = vec![
-        make_substring_rule("first", a1, 0, 0),
-        make_substring_rule("second", a2, 0, 0),
-        make_substring_rule("last", a3, 0, 0),
+        SubstringRule::new("first", a1, 0, 0),
+        SubstringRule::new("second", a2, 0, 0),
+        SubstringRule::new("last", a3, 0, 0),
     ];
     let mut cfg = default_config();
     cfg.output_attributes = vec!["a".to_string(), "b".to_string()];
@@ -131,13 +131,13 @@ fn test_annotations_propagated() {
 #[test]
 fn test_keep_minimal_overlapping() {
     let rules = vec![
-        make_substring_rule("abcd", HashMap::new(), 0, 0),
-        make_substring_rule("abc", HashMap::new(), 0, 0),
-        make_substring_rule("bc", HashMap::new(), 0, 0),
-        make_substring_rule("bcd", HashMap::new(), 0, 0),
-        make_substring_rule("bcde", HashMap::new(), 0, 0),
-        make_substring_rule("f", HashMap::new(), 0, 0),
-        make_substring_rule("ef", HashMap::new(), 0, 0),
+        SubstringRule::new("abcd", HashMap::new(), 0, 0),
+        SubstringRule::new("abc", HashMap::new(), 0, 0),
+        SubstringRule::new("bc", HashMap::new(), 0, 0),
+        SubstringRule::new("bcd", HashMap::new(), 0, 0),
+        SubstringRule::new("bcde", HashMap::new(), 0, 0),
+        SubstringRule::new("f", HashMap::new(), 0, 0),
+        SubstringRule::new("ef", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
     cfg.conflict_strategy = ConflictStrategy::KeepMinimal;
@@ -152,13 +152,13 @@ fn test_keep_minimal_overlapping() {
 #[test]
 fn test_keep_maximal_overlapping() {
     let rules = vec![
-        make_substring_rule("abcd", HashMap::new(), 0, 0),
-        make_substring_rule("abc", HashMap::new(), 0, 0),
-        make_substring_rule("bc", HashMap::new(), 0, 0),
-        make_substring_rule("bcd", HashMap::new(), 0, 0),
-        make_substring_rule("bcde", HashMap::new(), 0, 0),
-        make_substring_rule("f", HashMap::new(), 0, 0),
-        make_substring_rule("ef", HashMap::new(), 0, 0),
+        SubstringRule::new("abcd", HashMap::new(), 0, 0),
+        SubstringRule::new("abc", HashMap::new(), 0, 0),
+        SubstringRule::new("bc", HashMap::new(), 0, 0),
+        SubstringRule::new("bcd", HashMap::new(), 0, 0),
+        SubstringRule::new("bcde", HashMap::new(), 0, 0),
+        SubstringRule::new("f", HashMap::new(), 0, 0),
+        SubstringRule::new("ef", HashMap::new(), 0, 0),
     ];
     let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
     let result = tagger.tag("abcdea--efg");
@@ -172,13 +172,13 @@ fn test_keep_maximal_overlapping() {
 #[test]
 fn test_keep_all_overlapping() {
     let rules = vec![
-        make_substring_rule("abcd", HashMap::new(), 0, 0),
-        make_substring_rule("abc", HashMap::new(), 0, 0),
-        make_substring_rule("bc", HashMap::new(), 0, 0),
-        make_substring_rule("bcd", HashMap::new(), 0, 0),
-        make_substring_rule("bcde", HashMap::new(), 0, 0),
-        make_substring_rule("f", HashMap::new(), 0, 0),
-        make_substring_rule("ef", HashMap::new(), 0, 0),
+        SubstringRule::new("abcd", HashMap::new(), 0, 0),
+        SubstringRule::new("abc", HashMap::new(), 0, 0),
+        SubstringRule::new("bc", HashMap::new(), 0, 0),
+        SubstringRule::new("bcd", HashMap::new(), 0, 0),
+        SubstringRule::new("bcde", HashMap::new(), 0, 0),
+        SubstringRule::new("f", HashMap::new(), 0, 0),
+        SubstringRule::new("ef", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
     cfg.conflict_strategy = ConflictStrategy::KeepAll;
@@ -197,7 +197,7 @@ fn test_keep_all_overlapping() {
 /// Estonian multi-byte character offset handling.
 #[test]
 fn test_estonian_multibyte() {
-    let rules = vec![make_substring_rule("öö", HashMap::new(), 0, 0)];
+    let rules = vec![SubstringRule::new("öö", HashMap::new(), 0, 0)];
     let tagger = SubstringTagger::new(rules, "", default_config()).unwrap();
     let result = tagger.tag("Tüüpiline öökülma näide");
     assert_eq!(result.spans.len(), 1);
@@ -229,8 +229,8 @@ fn test_ambiguous_two_rules_same_pattern() {
     );
 
     let rules = vec![
-        make_substring_rule("Washington", a1, 0, 0),
-        make_substring_rule("Washington", a2, 0, 0),
+        SubstringRule::new("Washington", a1, 0, 0),
+        SubstringRule::new("Washington", a2, 0, 0),
     ];
     let mut cfg = default_config();
     cfg.output_attributes = vec!["type".to_string(), "country".to_string()];
@@ -244,8 +244,8 @@ fn test_ambiguous_two_rules_same_pattern() {
 #[test]
 fn test_pattern_attribute_injection() {
     let rules = vec![
-        make_substring_rule("hello", HashMap::new(), 0, 0),
-        make_substring_rule("world", HashMap::new(), 0, 0),
+        SubstringRule::new("hello", HashMap::new(), 0, 0),
+        SubstringRule::new("world", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
     cfg.pattern_attribute = Some("_pattern".to_string());
@@ -279,8 +279,8 @@ fn test_priority_resolution() {
     // "hello" (priority=0) and "hell" (priority=1) overlap.
     // KEEP_ALL_EXCEPT_PRIORITY should remove priority=1.
     let rules = vec![
-        make_substring_rule("hello", a1, 0, 0),
-        make_substring_rule("hell", a2, 0, 1),
+        SubstringRule::new("hello", a1, 0, 0),
+        SubstringRule::new("hell", a2, 0, 1),
     ];
     let mut cfg = default_config();
     cfg.conflict_strategy = ConflictStrategy::KeepAllExceptPriority;

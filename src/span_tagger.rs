@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use crate::conflict::{
-    conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches, MatchEntry,
-};
+use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
+
+use crate::conflict::{resolve_conflicts, MatchEntry};
 use crate::types::{
-    check_unique_patterns, has_missing_attributes, normalize_annotation, Annotation,
-    AnnotationValue, ConflictStrategy, TagResult, TaggedSpan,
+    assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
+    has_missing_attributes, AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggerRule,
 };
 
 /// A rule for the SpanTagger — maps a pattern string to static attributes.
@@ -20,18 +21,34 @@ pub struct SpanRule {
     pub priority: i32,
 }
 
-/// Create a SpanRule from components.
-pub fn make_span_rule(
-    pattern: &str,
-    attributes: HashMap<String, AnnotationValue>,
-    group: u32,
-    priority: i32,
-) -> SpanRule {
-    SpanRule {
-        pattern_str: pattern.to_string(),
-        attributes,
-        group,
-        priority,
+impl SpanRule {
+    pub fn new(
+        pattern: &str,
+        attributes: HashMap<String, AnnotationValue>,
+        group: u32,
+        priority: i32,
+    ) -> Self {
+        Self {
+            pattern_str: pattern.to_string(),
+            attributes,
+            group,
+            priority,
+        }
+    }
+}
+
+impl TaggerRule for SpanRule {
+    fn pattern_str(&self) -> &str {
+        &self.pattern_str
+    }
+    fn attributes(&self) -> &HashMap<String, AnnotationValue> {
+        &self.attributes
+    }
+    fn group(&self) -> u32 {
+        self.group
+    }
+    fn priority(&self) -> i32 {
+        self.priority
     }
 }
 
@@ -76,15 +93,7 @@ impl SpanTagger {
         }
 
         // Build the pattern → rule-indices lookup map.
-        let mut ruleset_map: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, rule) in rules.iter().enumerate() {
-            let key = if config.ignore_case {
-                rule.pattern_str.to_lowercase()
-            } else {
-                rule.pattern_str.clone()
-            };
-            ruleset_map.entry(key).or_default().push(i);
-        }
+        let ruleset_map = compute_rule_map(&rules, config.ignore_case);
 
         Ok(Self {
             rules,
@@ -107,10 +116,32 @@ impl SpanTagger {
         all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
 
         // Step 3: Apply conflict resolution.
-        let resolved = self.resolve_conflicts(&all_matches);
+        let resolved = resolve_conflicts(
+            self.config.conflict_strategy,
+            &all_matches,
+            |rule_idx| (self.rules[rule_idx].group as i32, self.rules[rule_idx].priority),
+        );
 
         // Step 4: Build TagResult.
         self.build_result(&resolved)
+    }
+
+    /// Look up a value string in the ruleset map, respecting case sensitivity,
+    /// and append any matching rule indices to `out`.
+    #[inline]
+    fn lookup_rules(&self, value_str: &str, span: MatchSpan, out: &mut Vec<MatchEntry>) {
+        let lowered;
+        let lookup_key: &str = if self.config.ignore_case {
+            lowered = value_str.to_lowercase();
+            &lowered
+        } else {
+            value_str
+        };
+        if let Some(rule_indices) = self.ruleset_map.get(lookup_key) {
+            for &rule_idx in rule_indices {
+                out.push((span, rule_idx));
+            }
+        }
     }
 
     /// Extract matches by scanning input annotations.
@@ -141,118 +172,108 @@ impl SpanTagger {
                     Some(AnnotationValue::Null) | Some(AnnotationValue::List(_)) | None => continue,
                 };
 
-                // Look up in ruleset map. Case-insensitive requires an
-                // owned lowercased key; case-sensitive can borrow directly.
-                let lowered;
-                let lookup_key: &str = if self.config.ignore_case {
-                    lowered = value_str.to_lowercase();
-                    &lowered
-                } else {
-                    value_str
-                };
-
-                if let Some(rule_indices) = self.ruleset_map.get(lookup_key) {
-                    for &rule_idx in rule_indices {
-                        matches.push((tagged_span.span, rule_idx));
-                    }
-                }
+                self.lookup_rules(value_str, tagged_span.span, &mut matches);
             }
         }
 
         matches
     }
 
-    /// Apply the configured conflict resolution strategy.
-    fn resolve_conflicts(&self, sorted: &[MatchEntry]) -> Vec<MatchEntry> {
-        match self.config.conflict_strategy {
-            ConflictStrategy::KeepAll => sorted.to_vec(),
-            ConflictStrategy::KeepMaximal => keep_maximal_matches(sorted),
-            ConflictStrategy::KeepMinimal => keep_minimal_matches(sorted),
-            ConflictStrategy::KeepAllExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                conflict_priority_resolver(sorted, &groups, &priorities)
-            }
-            ConflictStrategy::KeepMaximalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_maximal_matches(&after_priority)
-            }
-            ConflictStrategy::KeepMinimalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_minimal_matches(&after_priority)
-            }
-        }
-    }
-
-    /// Extract group and priority arrays for the priority resolver.
-    fn extract_group_priority(&self, entries: &[MatchEntry]) -> (Vec<i32>, Vec<i32>) {
-        let groups: Vec<i32> = entries
-            .iter()
-            .map(|(_, rule_idx)| self.rules[*rule_idx].group as i32)
-            .collect();
-        let priorities: Vec<i32> = entries
-            .iter()
-            .map(|(_, rule_idx)| self.rules[*rule_idx].priority)
-            .collect();
-        (groups, priorities)
-    }
-
     /// Build the final TagResult from resolved matches.
     fn build_result(&self, resolved: &[MatchEntry]) -> TagResult {
-        let mut spans: Vec<TaggedSpan> = Vec::new();
+        let entries = resolved.iter().map(|&(match_span, rule_idx)| {
+            let annotation = build_rule_annotation(
+                &self.rules[rule_idx],
+                &self.config.output_attributes,
+                self.config.group_attribute.as_deref(),
+                self.config.priority_attribute.as_deref(),
+                self.config.pattern_attribute.as_deref(),
+            );
+            (match_span, annotation)
+        });
+        assemble_tag_result(
+            entries,
+            &self.config.output_layer,
+            &self.config.output_attributes,
+            self.config.ambiguous_output_layer,
+        )
+    }
 
-        for &(match_span, rule_idx) in resolved {
-            let rule = &self.rules[rule_idx];
-            let mut annotation = Annotation::new();
+    /// Tag an input layer dict directly from Python, avoiding full `TagResult`
+    /// materialization.
+    ///
+    /// Only extracts the `input_attribute` value from each annotation (skipping
+    /// full dict conversion), then runs the standard sort → resolve → build
+    /// pipeline.
+    pub fn tag_from_py(&self, input: &Bound<'_, PyDict>) -> PyResult<TagResult> {
+        let spans_obj = input
+            .get_item("spans")?
+            .ok_or_else(|| pyo3::exceptions::PyKeyError::new_err("'spans' key required"))?;
+        let spans_list = spans_obj.downcast::<PyList>().map_err(|_| {
+            pyo3::exceptions::PyTypeError::new_err("'spans' must be a list")
+        })?;
 
-            // Copy static attributes from rule.
-            for (k, v) in &rule.attributes {
-                annotation.0.insert(k.clone(), v.clone());
-            }
+        let mut all_matches: Vec<MatchEntry> = Vec::new();
 
-            // Optionally add group/priority/pattern attributes.
-            if let Some(ref attr_name) = self.config.group_attribute {
-                annotation
-                    .0
-                    .insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
-            }
-            if let Some(ref attr_name) = self.config.priority_attribute {
-                annotation
-                    .0
-                    .insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
-            }
-            if let Some(ref attr_name) = self.config.pattern_attribute {
-                annotation.0.insert(
-                    attr_name.clone(),
-                    AnnotationValue::Str(rule.pattern_str.clone()),
-                );
-            }
+        for span_item in spans_list.iter() {
+            let span_dict = span_item.downcast::<PyDict>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("Each span must be a dict")
+            })?;
 
-            // Normalize: fill missing output_attributes with Null.
-            normalize_annotation(&mut annotation, &self.config.output_attributes);
+            let base_span: (usize, usize) = span_dict
+                .get_item("base_span")?
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err("'base_span' key required")
+                })?
+                .extract()?;
+            let match_span = MatchSpan::new(base_span.0, base_span.1);
 
-            // Merge into existing span or create new one.
-            if let Some(last) = spans.last_mut() {
-                if last.span == match_span {
-                    if self.config.ambiguous_output_layer {
-                        last.annotations.push(annotation);
+            let ann_obj = span_dict
+                .get_item("annotations")?
+                .ok_or_else(|| {
+                    pyo3::exceptions::PyKeyError::new_err("'annotations' key required")
+                })?;
+            let ann_list = ann_obj.downcast::<PyList>().map_err(|_| {
+                pyo3::exceptions::PyTypeError::new_err("'annotations' must be a list")
+            })?;
+
+            for ann_item in ann_list.iter() {
+                let ann_dict = ann_item.downcast::<PyDict>().map_err(|_| {
+                    pyo3::exceptions::PyTypeError::new_err("Each annotation must be a dict")
+                })?;
+
+                if let Some(val_obj) = ann_dict.get_item(&self.config.input_attribute)? {
+                    if val_obj.is_none() {
+                        continue;
                     }
-                    continue;
+                    // Extract string representation matching the Rust-side logic.
+                    // Check bool before int because Python bool is a subclass of int.
+                    let value_str: String = if let Ok(s) = val_obj.extract::<String>() {
+                        s
+                    } else if let Ok(b) = val_obj.extract::<bool>() {
+                        b.to_string()
+                    } else if let Ok(i) = val_obj.extract::<i64>() {
+                        i.to_string()
+                    } else if let Ok(f) = val_obj.extract::<f64>() {
+                        f.to_string()
+                    } else {
+                        continue;
+                    };
+
+                    self.lookup_rules(&value_str, match_span, &mut all_matches);
                 }
             }
-            spans.push(TaggedSpan {
-                span: match_span,
-                annotations: vec![annotation],
-            });
         }
 
-        TagResult {
-            name: self.config.output_layer.clone(),
-            attributes: self.config.output_attributes.clone(),
-            ambiguous: self.config.ambiguous_output_layer,
-            spans,
-        }
+        all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
+
+        let resolved = resolve_conflicts(
+            self.config.conflict_strategy,
+            &all_matches,
+            |rule_idx| (self.rules[rule_idx].group as i32, self.rules[rule_idx].priority),
+        );
+
+        Ok(self.build_result(&resolved))
     }
 
     /// Check if rules have inconsistent attribute sets.
@@ -274,7 +295,7 @@ impl SpanTagger {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::MatchSpan;
+    use crate::types::{Annotation, MatchSpan, TaggedSpan};
 
     fn make_input_layer(spans: Vec<(usize, usize, Vec<HashMap<String, AnnotationValue>>)>) -> TagResult {
         TagResult {
@@ -312,7 +333,7 @@ mod tests {
     #[test]
     fn test_basic_matching() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "cat",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("animal".to_string()))]),
                 0,
@@ -342,7 +363,7 @@ mod tests {
     #[test]
     fn test_no_match() {
         let rules = vec![
-            make_span_rule("cat", HashMap::new(), 0, 0),
+            SpanRule::new("cat", HashMap::new(), 0, 0),
         ];
         let tagger = SpanTagger::new(rules, default_config()).unwrap();
 
@@ -357,7 +378,7 @@ mod tests {
     #[test]
     fn test_ignore_case() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "cat",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("animal".to_string()))]),
                 0,
@@ -383,13 +404,13 @@ mod tests {
     #[test]
     fn test_multiple_rules_same_pattern() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "bank",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("finance".to_string()))]),
                 0,
                 0,
             ),
-            make_span_rule(
+            SpanRule::new(
                 "bank",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("river".to_string()))]),
                 0,
@@ -414,8 +435,8 @@ mod tests {
     #[test]
     fn test_non_ambiguous_output() {
         let rules = vec![
-            make_span_rule("x", HashMap::new(), 0, 0),
-            make_span_rule("x", HashMap::new(), 0, 1),
+            SpanRule::new("x", HashMap::new(), 0, 0),
+            SpanRule::new("x", HashMap::new(), 0, 1),
         ];
         let config = SpanTaggerConfig {
             ambiguous_output_layer: false,
@@ -436,8 +457,8 @@ mod tests {
     #[test]
     fn test_conflict_keep_maximal() {
         let rules = vec![
-            make_span_rule("a", HashMap::new(), 0, 0),
-            make_span_rule("b", HashMap::new(), 0, 0),
+            SpanRule::new("a", HashMap::new(), 0, 0),
+            SpanRule::new("b", HashMap::new(), 0, 0),
         ];
         let config = SpanTaggerConfig {
             conflict_strategy: ConflictStrategy::KeepMaximal,
@@ -459,8 +480,8 @@ mod tests {
     #[test]
     fn test_conflict_keep_minimal() {
         let rules = vec![
-            make_span_rule("a", HashMap::new(), 0, 0),
-            make_span_rule("b", HashMap::new(), 0, 0),
+            SpanRule::new("a", HashMap::new(), 0, 0),
+            SpanRule::new("b", HashMap::new(), 0, 0),
         ];
         let config = SpanTaggerConfig {
             conflict_strategy: ConflictStrategy::KeepMinimal,
@@ -482,7 +503,7 @@ mod tests {
     #[test]
     fn test_group_priority_pattern_attributes() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "cat",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("animal".to_string()))]),
                 5,
@@ -515,8 +536,8 @@ mod tests {
     #[test]
     fn test_unique_patterns_enforced() {
         let rules = vec![
-            make_span_rule("x", HashMap::new(), 0, 0),
-            make_span_rule("x", HashMap::new(), 0, 1),
+            SpanRule::new("x", HashMap::new(), 0, 0),
+            SpanRule::new("x", HashMap::new(), 0, 1),
         ];
         let config = SpanTaggerConfig {
             unique_patterns: true,
@@ -530,13 +551,13 @@ mod tests {
     #[test]
     fn test_missing_attributes() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "a",
                 HashMap::from([("x".to_string(), AnnotationValue::Int(1))]),
                 0,
                 0,
             ),
-            make_span_rule(
+            SpanRule::new(
                 "b",
                 HashMap::from([("y".to_string(), AnnotationValue::Int(2))]),
                 0,
@@ -550,13 +571,13 @@ mod tests {
     #[test]
     fn test_missing_attributes_consistent() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "a",
                 HashMap::from([("x".to_string(), AnnotationValue::Int(1))]),
                 0,
                 0,
             ),
-            make_span_rule(
+            SpanRule::new(
                 "b",
                 HashMap::from([("x".to_string(), AnnotationValue::Int(2))]),
                 0,
@@ -570,7 +591,7 @@ mod tests {
     #[test]
     fn test_null_attribute_skipped() {
         let rules = vec![
-            make_span_rule("x", HashMap::new(), 0, 0),
+            SpanRule::new("x", HashMap::new(), 0, 0),
         ];
         let tagger = SpanTagger::new(rules, default_config()).unwrap();
 
@@ -585,7 +606,7 @@ mod tests {
     #[test]
     fn test_missing_attribute_skipped() {
         let rules = vec![
-            make_span_rule("x", HashMap::new(), 0, 0),
+            SpanRule::new("x", HashMap::new(), 0, 0),
         ];
         let tagger = SpanTagger::new(rules, default_config()).unwrap();
 
@@ -601,7 +622,7 @@ mod tests {
     #[test]
     fn test_int_attribute_value_matching() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "42",
                 HashMap::from([("label".to_string(), AnnotationValue::Str("found".to_string()))]),
                 0,
@@ -634,7 +655,7 @@ mod tests {
     #[test]
     fn test_normalize_fills_missing() {
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "a",
                 HashMap::from([("x".to_string(), AnnotationValue::Int(1))]),
                 0,
@@ -660,9 +681,9 @@ mod tests {
     #[test]
     fn test_rule_map() {
         let rules = vec![
-            make_span_rule("a", HashMap::new(), 0, 0),
-            make_span_rule("b", HashMap::new(), 0, 0),
-            make_span_rule("a", HashMap::new(), 0, 1),
+            SpanRule::new("a", HashMap::new(), 0, 0),
+            SpanRule::new("b", HashMap::new(), 0, 0),
+            SpanRule::new("a", HashMap::new(), 0, 1),
         ];
         let tagger = SpanTagger::new(rules, default_config()).unwrap();
         let map = tagger.rule_map();
@@ -673,8 +694,8 @@ mod tests {
     #[test]
     fn test_priority_conflict_resolution() {
         let rules = vec![
-            make_span_rule("a", HashMap::new(), 0, 0),
-            make_span_rule("b", HashMap::new(), 0, 1),
+            SpanRule::new("a", HashMap::new(), 0, 0),
+            SpanRule::new("b", HashMap::new(), 0, 1),
         ];
         let config = SpanTaggerConfig {
             conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
@@ -698,7 +719,7 @@ mod tests {
     fn test_ambiguous_input_annotations() {
         // Input span has multiple annotations; each should be checked.
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "cat",
                 HashMap::from([("type".to_string(), AnnotationValue::Str("animal".to_string()))]),
                 0,
@@ -753,13 +774,13 @@ mod tests {
         };
 
         let rules = vec![
-            make_span_rule(
+            SpanRule::new(
                 "tundma",
                 HashMap::from([("value".to_string(), AnnotationValue::Str("T".to_string()))]),
                 0,
                 1,
             ),
-            make_span_rule(
+            SpanRule::new(
                 "päike",
                 HashMap::from([("value".to_string(), AnnotationValue::Str("P".to_string()))]),
                 0,

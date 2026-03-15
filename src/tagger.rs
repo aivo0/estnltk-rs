@@ -1,13 +1,12 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::byte_char::byte_to_char_map;
-use crate::conflict::{
-    conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches, MatchEntry,
-};
+use crate::conflict::{resolve_conflicts, MatchEntry};
+#[cfg(test)]
+use crate::types::ConflictStrategy;
 use crate::types::{
-    check_unique_patterns, has_missing_attributes, normalize_annotation, Annotation,
-    AnnotationValue, ConflictStrategy, ExtractionRule, MatchSpan, TagResult, TaggedSpan,
-    TaggerConfig,
+    assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
+    has_missing_attributes, AnnotationValue, ExtractionRule, MatchSpan, TagResult, TaggerConfig,
 };
 
 /// The core regex tagger — Rust equivalent of EstNLTK's `RegexTagger`.
@@ -47,7 +46,11 @@ impl RegexTagger {
         all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
 
         // Step 3: Apply conflict resolution.
-        let resolved = self.resolve_conflicts(&all_matches);
+        let resolved = resolve_conflicts(
+            self.config.conflict_strategy,
+            &all_matches,
+            |rule_idx| (self.rules[rule_idx].group as i32, self.rules[rule_idx].priority),
+        );
 
         // Step 4: Build TagResult.
         self.build_result(&resolved, &raw_text)
@@ -197,60 +200,19 @@ impl RegexTagger {
         matches
     }
 
-    /// Apply the configured conflict resolution strategy.
-    fn resolve_conflicts(&self, sorted: &[MatchEntry]) -> Vec<MatchEntry> {
-        match self.config.conflict_strategy {
-            ConflictStrategy::KeepAll => sorted.to_vec(),
-            ConflictStrategy::KeepMaximal => keep_maximal_matches(sorted),
-            ConflictStrategy::KeepMinimal => keep_minimal_matches(sorted),
-            ConflictStrategy::KeepAllExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                conflict_priority_resolver(sorted, &groups, &priorities)
-            }
-            ConflictStrategy::KeepMaximalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_maximal_matches(&after_priority)
-            }
-            ConflictStrategy::KeepMinimalExceptPriority => {
-                let (groups, priorities) = self.extract_group_priority(sorted);
-                let after_priority = conflict_priority_resolver(sorted, &groups, &priorities);
-                keep_minimal_matches(&after_priority)
-            }
-        }
-    }
-
-    /// Extract group and priority arrays for the priority resolver.
-    fn extract_group_priority(&self, entries: &[MatchEntry]) -> (Vec<i32>, Vec<i32>) {
-        let groups: Vec<i32> = entries
-            .iter()
-            .map(|(_, rule_idx)| self.rules[*rule_idx].group as i32)
-            .collect();
-        let priorities: Vec<i32> = entries
-            .iter()
-            .map(|(_, rule_idx)| self.rules[*rule_idx].priority)
-            .collect();
-        (groups, priorities)
-    }
-
     /// Build the final TagResult from resolved matches.
     ///
     /// `text` is the (possibly lowercased) text that was matched against,
     /// used to extract matched substrings when `match_attribute` is set.
     fn build_result(&self, resolved: &[MatchEntry], text: &str) -> TagResult {
-        // Group consecutive matches at the same span (for ambiguous layers).
-        let mut spans: Vec<TaggedSpan> = Vec::new();
-
-        for &(match_span, rule_idx) in resolved {
-            let rule = &self.rules[rule_idx];
-            let mut annotation = Annotation::new();
-
-            // Copy static attributes from rule.
-            for (k, v) in &rule.attributes {
-                annotation.0.insert(k.clone(), v.clone());
-            }
-
-            // Optionally store matched text substring.
+        let entries = resolved.iter().map(|&(match_span, rule_idx)| {
+            let mut annotation = build_rule_annotation(
+                &self.rules[rule_idx],
+                &self.config.output_attributes,
+                self.config.group_attribute.as_deref(),
+                self.config.priority_attribute.as_deref(),
+                self.config.pattern_attribute.as_deref(),
+            );
             if let Some(ref attr_name) = self.config.match_attribute {
                 let matched_text: String = text
                     .chars()
@@ -261,50 +223,14 @@ impl RegexTagger {
                     .0
                     .insert(attr_name.clone(), AnnotationValue::Str(matched_text));
             }
-
-            // Optionally add group/priority/pattern attributes.
-            if let Some(ref attr_name) = self.config.group_attribute {
-                annotation
-                    .0
-                    .insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
-            }
-            if let Some(ref attr_name) = self.config.priority_attribute {
-                annotation
-                    .0
-                    .insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
-            }
-            if let Some(ref attr_name) = self.config.pattern_attribute {
-                annotation.0.insert(
-                    attr_name.clone(),
-                    AnnotationValue::Str(rule.pattern_str.clone()),
-                );
-            }
-
-            // Normalize: fill missing output_attributes with Null.
-            normalize_annotation(&mut annotation, &self.config.output_attributes);
-
-            // Merge into existing span or create new one.
-            if let Some(last) = spans.last_mut() {
-                if last.span == match_span {
-                    // Non-ambiguous: keep only the first annotation per span.
-                    if self.config.ambiguous_output_layer {
-                        last.annotations.push(annotation);
-                    }
-                    continue;
-                }
-            }
-            spans.push(TaggedSpan {
-                span: match_span,
-                annotations: vec![annotation],
-            });
-        }
-
-        TagResult {
-            name: self.config.output_layer.clone(),
-            attributes: self.config.output_attributes.clone(),
-            ambiguous: self.config.ambiguous_output_layer,
-            spans,
-        }
+            (match_span, annotation)
+        });
+        assemble_tag_result(
+            entries,
+            &self.config.output_layer,
+            &self.config.output_attributes,
+            self.config.ambiguous_output_layer,
+        )
     }
 
     /// Check if rules have inconsistent attribute sets.
@@ -323,16 +249,7 @@ impl RegexTagger {
     /// Groups rules by their pattern string, so patterns shared by multiple rules
     /// (ambiguous rules) map to multiple indices.
     pub fn rule_map(&self) -> HashMap<String, Vec<usize>> {
-        let mut map: HashMap<String, Vec<usize>> = HashMap::new();
-        for (i, rule) in self.rules.iter().enumerate() {
-            let key = if self.config.lowercase_text {
-                rule.pattern_str.to_lowercase()
-            } else {
-                rule.pattern_str.clone()
-            };
-            map.entry(key).or_default().push(i);
-        }
-        map
+        compute_rule_map(&self.rules, self.config.lowercase_text)
     }
 }
 

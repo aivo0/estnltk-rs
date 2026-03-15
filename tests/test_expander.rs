@@ -4,7 +4,7 @@ mod expander_tests {
     use std::path::Path;
 
     use estnltk_regex_rs::expander::{default_expander, expand_rules, noun_forms_expander};
-    use estnltk_regex_rs::substring_tagger::{make_substring_rule, SubstringTagger};
+    use estnltk_regex_rs::substring_tagger::{SubstringRule, SubstringTagger};
     use estnltk_regex_rs::types::{AnnotationValue, ConflictStrategy, TaggerConfig};
     use vabamorf_rs::Vabamorf;
 
@@ -65,7 +65,7 @@ mod expander_tests {
     #[test]
     fn test_expand_rules_multiplies() {
         let mut vm = get_vm();
-        let rules = vec![make_substring_rule("maja", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("maja", HashMap::new(), 0, 0)];
         let expanded = expand_rules(rules, "noun_forms", &mut vm, false).unwrap();
         assert!(
             expanded.len() > 1,
@@ -83,7 +83,7 @@ mod expander_tests {
             "type".to_string(),
             AnnotationValue::Str("building".to_string()),
         );
-        let rules = vec![make_substring_rule("maja", attrs, 0, 0)];
+        let rules = vec![SubstringRule::new("maja", attrs, 0, 0)];
         let expanded = expand_rules(rules, "noun_forms", &mut vm, false).unwrap();
 
         let tagger = SubstringTagger::new(expanded, "", default_config()).unwrap();
@@ -99,7 +99,7 @@ mod expander_tests {
     #[test]
     fn test_empty_forms_filtered() {
         let mut vm = get_vm();
-        let rules = vec![make_substring_rule("maja", HashMap::new(), 0, 0)];
+        let rules = vec![SubstringRule::new("maja", HashMap::new(), 0, 0)];
         let expanded = expand_rules(rules, "noun_forms", &mut vm, false).unwrap();
         for rule in &expanded {
             assert!(
