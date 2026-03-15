@@ -318,6 +318,106 @@ pub fn build_merged_string_lists_pattern(
     build_string_list_pattern(&all_strings, replacements, ignore_case, flags_ref)
 }
 
+/// Build a regex pattern from a template with named placeholders.
+///
+/// This is the Rust port of EstNLTK's `RegexPattern` from the `regex_library` subpackage.
+///
+/// The template uses `{name}` syntax for placeholders. Each placeholder is replaced
+/// with the corresponding pattern from the `components` map, wrapped in a non-capture
+/// group `(?:...)` to prevent operator precedence issues with surrounding syntax.
+///
+/// The final composed pattern is validated with resharp to ensure it compiles.
+///
+/// # Arguments
+/// * `template` - Template string with `{name}` placeholders (e.g., `"(?:{prefix}\\s+)?{main}"`)
+/// * `components` - Map of placeholder names to regex pattern strings
+///
+/// # Returns
+/// The composed regex pattern string, or an error if:
+/// - A placeholder in the template has no corresponding entry in `components`
+/// - The composed pattern fails to compile with resharp
+///
+/// # Examples
+/// ```
+/// use std::collections::HashMap;
+/// use estnltk_regex_rs::string_list::build_regex_pattern;
+/// let mut components = HashMap::new();
+/// components.insert("prefix".to_string(), "Mr|Mrs|Dr".to_string());
+/// components.insert("main".to_string(), "[A-Z][a-z]+".to_string());
+/// let result = build_regex_pattern("(?:{prefix}\\s+)?{main}", &components).unwrap();
+/// assert_eq!(result, "(?:(?:Mr|Mrs|Dr)\\s+)?(?:[A-Z][a-z]+)");
+/// ```
+pub fn build_regex_pattern(
+    template: &str,
+    components: &HashMap<String, String>,
+) -> Result<String, String> {
+    if template.is_empty() {
+        return Err("template must not be empty".to_string());
+    }
+
+    // Parse template and substitute placeholders.
+    // We scan for `{name}` sequences. Literal `{{` and `}}` are escaped braces.
+    let mut result = String::with_capacity(template.len() * 2);
+    let chars: Vec<char> = template.chars().collect();
+    let mut i = 0;
+
+    while i < chars.len() {
+        if chars[i] == '{' {
+            // Check for escaped brace `{{`
+            if i + 1 < chars.len() && chars[i + 1] == '{' {
+                result.push('{');
+                i += 2;
+                continue;
+            }
+            // Find the closing brace
+            let start = i + 1;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '}' {
+                end += 1;
+            }
+            if end >= chars.len() {
+                return Err(format!(
+                    "Unclosed placeholder '{{' at position {}",
+                    i
+                ));
+            }
+            let name: String = chars[start..end].iter().collect();
+            if name.is_empty() {
+                return Err("Empty placeholder name '{}' in template".to_string());
+            }
+            let pattern = components.get(&name).ok_or_else(|| {
+                format!(
+                    "No component provided for placeholder '{{{}}}'",
+                    name
+                )
+            })?;
+            // Wrap in non-capture group to isolate from surrounding syntax
+            result.push_str(&format!("(?:{})", pattern));
+            i = end + 1;
+        } else if chars[i] == '}' {
+            // Check for escaped brace `}}`
+            if i + 1 < chars.len() && chars[i + 1] == '}' {
+                result.push('}');
+                i += 2;
+                continue;
+            }
+            return Err(format!(
+                "Unexpected '}}' at position {} without matching '{{'",
+                i
+            ));
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    // Validate the composed pattern with resharp
+    resharp::Regex::new(&result)
+        .map_err(|e| format!("Composed pattern is invalid: {}", e))?;
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -661,5 +761,132 @@ mod tests {
             build_merged_string_lists_pattern(&lists, &HashMap::new(), false, None).unwrap();
         // Sorted by byte length: üleeile (9), homme (5), täna (5, ä=2 bytes), eile (4)
         assert_eq!(result, "(?:üleeile|homme|täna|eile)");
+    }
+
+    // --- RegexPattern tests ---
+
+    #[test]
+    fn test_regex_pattern_basic() {
+        let mut components = HashMap::new();
+        components.insert("prefix".to_string(), "Mr|Mrs|Dr".to_string());
+        components.insert("main".to_string(), "[A-Z][a-z]+".to_string());
+        let result =
+            build_regex_pattern(r"(?:{prefix}\s+)?{main}", &components).unwrap();
+        assert_eq!(result, r"(?:(?:Mr|Mrs|Dr)\s+)?(?:[A-Z][a-z]+)");
+    }
+
+    #[test]
+    fn test_regex_pattern_single_placeholder() {
+        let mut components = HashMap::new();
+        components.insert("digits".to_string(), r"\d+".to_string());
+        let result = build_regex_pattern("{digits}", &components).unwrap();
+        assert_eq!(result, r"(?:\d+)");
+    }
+
+    #[test]
+    fn test_regex_pattern_no_placeholders() {
+        let components = HashMap::new();
+        let result = build_regex_pattern(r"\d+\s+\w+", &components).unwrap();
+        assert_eq!(result, r"\d+\s+\w+");
+    }
+
+    #[test]
+    fn test_regex_pattern_missing_component() {
+        let components = HashMap::new();
+        let result = build_regex_pattern("{missing}", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing"));
+    }
+
+    #[test]
+    fn test_regex_pattern_empty_template() {
+        let components = HashMap::new();
+        let result = build_regex_pattern("", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must not be empty"));
+    }
+
+    #[test]
+    fn test_regex_pattern_unclosed_brace() {
+        let components = HashMap::new();
+        let result = build_regex_pattern("abc{def", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unclosed"));
+    }
+
+    #[test]
+    fn test_regex_pattern_empty_placeholder() {
+        let components = HashMap::new();
+        let result = build_regex_pattern("abc{}def", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Empty placeholder"));
+    }
+
+    #[test]
+    fn test_regex_pattern_escaped_braces() {
+        let components = HashMap::new();
+        let result = build_regex_pattern(r"\d{{3}}", &components).unwrap();
+        // `{{` → `{`, `}}` → `}`, so result is `\d{3}`
+        assert_eq!(result, r"\d{3}");
+    }
+
+    #[test]
+    fn test_regex_pattern_with_string_list() {
+        // Compose with a StringList pattern
+        let titles = build_string_list_pattern(
+            &["Mr".to_string(), "Mrs".to_string(), "Dr".to_string()],
+            &HashMap::new(),
+            false,
+            None,
+        )
+        .unwrap();
+        let mut components = HashMap::new();
+        components.insert("title".to_string(), titles);
+        components.insert("name".to_string(), "[A-Z][a-z]+".to_string());
+        let result =
+            build_regex_pattern(r"(?:{title}\s+)?{name}", &components).unwrap();
+        assert_eq!(
+            result,
+            r"(?:(?:(?:Mrs|Dr|Mr))\s+)?(?:[A-Z][a-z]+)"
+        );
+    }
+
+    #[test]
+    fn test_regex_pattern_estonian() {
+        let mut components = HashMap::new();
+        components.insert("eesnimi".to_string(), "[A-ZÖÄÜÕ][a-zöäüõ]+".to_string());
+        components.insert("perenimi".to_string(), "[A-ZÖÄÜÕ][a-zöäüõ]+".to_string());
+        let result =
+            build_regex_pattern(r"{eesnimi}\s+{perenimi}", &components).unwrap();
+        assert_eq!(
+            result,
+            r"(?:[A-ZÖÄÜÕ][a-zöäüõ]+)\s+(?:[A-ZÖÄÜÕ][a-zöäüõ]+)"
+        );
+    }
+
+    #[test]
+    fn test_regex_pattern_multiple_same_placeholder() {
+        let mut components = HashMap::new();
+        components.insert("word".to_string(), r"\w+".to_string());
+        let result =
+            build_regex_pattern(r"{word}\s+{word}", &components).unwrap();
+        assert_eq!(result, r"(?:\w+)\s+(?:\w+)");
+    }
+
+    #[test]
+    fn test_regex_pattern_invalid_composed() {
+        let mut components = HashMap::new();
+        components.insert("bad".to_string(), "[unclosed".to_string());
+        let result = build_regex_pattern("{bad}", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Composed pattern is invalid"));
+    }
+
+    #[test]
+    fn test_regex_pattern_unmatched_closing_brace() {
+        let components = HashMap::new();
+        let result = build_regex_pattern("abc}def", &components);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unexpected '}'"));
     }
 }

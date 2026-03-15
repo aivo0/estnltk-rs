@@ -603,6 +603,40 @@ fn rs_merged_string_lists_pattern(
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
 }
 
+/// Build a regex pattern from a template with named placeholders.
+///
+/// Port of EstNLTK's `RegexPattern` from the `regex_library` subpackage.
+/// The template uses `{name}` syntax for placeholders. Each placeholder is
+/// replaced with the corresponding pattern from the `components` dict, wrapped
+/// in a non-capture group `(?:...)` to prevent operator precedence issues.
+///
+/// Use `{{` and `}}` for literal braces in the template (e.g., `r"\d{{3}}"` → `\d{3}`).
+///
+/// The final composed pattern is validated with resharp to ensure it compiles.
+///
+/// Args:
+///     template: Template string with `{name}` placeholders
+///               (e.g., `r"(?:{prefix}\s+)?{main}"`).
+///     components: Dict mapping placeholder names to regex pattern strings.
+///
+/// Returns:
+///     The composed regex pattern string.
+///
+/// Example (Python):
+///
+/// ```python
+/// rs_regex_pattern(
+///     r"(?:{prefix}\s+)?{main}",
+///     {"prefix": "Mr|Mrs|Dr", "main": r"[A-Z][a-z]+"}
+/// )
+/// # "(?:(?:Mr|Mrs|Dr)\\s+)?(?:[A-Z][a-z]+)"
+/// ```
+#[pyfunction]
+fn rs_regex_pattern(template: &str, components: HashMap<String, String>) -> PyResult<String> {
+    string_list::build_regex_pattern(template, &components)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+}
+
 // ── Vabamorf integration (feature-gated) ─────────────────────────────────────
 
 #[cfg(feature = "vabamorf")]
@@ -762,6 +796,7 @@ fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rs_string_list_pattern, m)?)?;
     m.add_function(wrap_pyfunction!(rs_choice_group_pattern, m)?)?;
     m.add_function(wrap_pyfunction!(rs_merged_string_lists_pattern, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_regex_pattern, m)?)?;
 
     #[cfg(feature = "vabamorf")]
     {
