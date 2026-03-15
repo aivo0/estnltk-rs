@@ -155,3 +155,48 @@ fn test_pattern_attribute() {
         Some(&AnnotationValue::Str("hello".to_string()))
     );
 }
+
+// ── Capture group integration tests ──────────────────────────────────
+
+#[test]
+fn test_capture_group_email_domain() {
+    // Extract just the domain from an email pattern.
+    // Pattern: (\w+)@(\w+\.\w+)  — group 2 = domain
+    let mut attrs = HashMap::new();
+    attrs.insert(
+        "type".to_string(),
+        AnnotationValue::Str("domain".to_string()),
+    );
+    let rule = make_rule(r"([a-zA-Z0-9_.+-]+)@([a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)", attrs, 2, 0).unwrap();
+    let mut cfg = default_config();
+    cfg.output_attributes = vec!["type".to_string()];
+    let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+    let result = tagger.tag("Kirjuta aadressile info@example.com kohe");
+    assert_eq!(result.spans.len(), 1);
+    // "info@example.com" starts at char 19
+    // group 2 = "example.com" = chars 24..35
+    assert_eq!(result.spans[0].span, MatchSpan::new(24, 35));
+    assert_eq!(
+        result.spans[0].annotations[0].0.get("type"),
+        Some(&AnnotationValue::Str("domain".to_string()))
+    );
+}
+
+#[test]
+fn test_capture_group_estonian_name_extraction() {
+    // Extract Estonian names after honorific.
+    // "Proua Kärner ja härra Põldmäe tulid"
+    let rule = make_rule(r"([Pp]roua|[Hh]ärra)\s+(\w+)", HashMap::new(), 2, 0).unwrap();
+    let mut cfg = default_config();
+    cfg.conflict_strategy = ConflictStrategy::KeepAll;
+    let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+    let result = tagger.tag("Proua Kärner ja härra Põldmäe tulid");
+
+    assert_eq!(result.spans.len(), 2);
+    // "Kärner" and "Põldmäe" — verify both names are extracted
+    // P(0) r(1) o(2) u(3) a(4) ' '(5) K(6) ä(7) r(8) n(9) e(10) r(11)
+    // ' '(12) j(13) a(14) ' '(15) h(16) ä(17) r(18) r(19) a(20) ' '(21)
+    // P(22) õ(23) l(24) d(25) m(26) ä(27) e(28) ' '(29) ...
+    assert_eq!(result.spans[0].span, MatchSpan::new(6, 12)); // "Kärner"
+    assert_eq!(result.spans[1].span, MatchSpan::new(22, 29)); // "Põldmäe"
+}

@@ -10,7 +10,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 
 | Tagger | EstNLTK | estnltk-rs | Coverage |
 |--------|---------|------------|----------|
-| RegexTagger | `regex` library, supports capture groups, overlapping | `resharp` DFA engine, group=0 only | **Partial** |
+| RegexTagger | `regex` library, supports capture groups, overlapping | `resharp` DFA engine + `regex` crate two-pass capture group extraction | **Partial** |
 | SubstringTagger | Aho-Corasick automaton for multi-string matching | `aho-corasick` automaton, token separators, static rules | **Partial** |
 | SpanTagger | Matches input layer attribute values against ruleset | — | **None** |
 | PhraseTagger | Matches sequential attribute values (phrase tuples), enveloping layer | — | **None** |
@@ -66,13 +66,14 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 | StaticExtractionRule | Frozen dataclass: `pattern`, `attributes`, `group`, `priority` | `ExtractionRule` struct with same fields + compiled regex | **Full** |
 | DynamicExtractionRule | Frozen dataclass: `pattern`, `decorator`, `group`, `priority` | — | **None** |
 | Pattern type | Any (typically `regex.Regex` or string) | String compiled to `resharp::Regex` | **Partial** |
-| `group` field | Any non-negative int (selects capture group) | Must be 0; non-zero rejected at construction | **Partial** |
+| `group` field | Any non-negative int (selects capture group) | Any non-negative int; two-pass extraction via anchored `regex` crate. Validated against pattern's capture count at construction | **Full** |
 | `priority` field | int, default 0 | i32, default 0 | **Full** |
 | `attributes` field | `Dict[str, Any]` — any Python value | `HashMap<String, AnnotationValue>` — str/int/float/bool/null only | **Partial** |
 
 **Notes:**
 - DynamicExtractionRule carries a Python callable (`decorator`) that modifies annotations at match time. This concept is inherently Python-specific.
 - EstNLTK's `attributes` dict can hold arbitrary Python objects (lists, dicts, custom classes). The Rust side supports only scalar types.
+- Capture group support uses a two-pass approach: resharp finds the full match (group 0), then an anchored `regex::Regex` (`^(?:<pattern>)$`) extracts the requested group from the matched substring. The anchoring eliminates leftmost-first vs leftmost-longest divergence between engines. Patterns using resharp-only syntax (intersection `&`, complement `~`) cannot use capture groups since the `regex` crate cannot parse them.
 
 ---
 
@@ -132,7 +133,7 @@ Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to 
 |---------|--------------------------|------------------------|
 | Engine type | NFA backtracking | DFA (deterministic) |
 | Time complexity | Exponential worst case | Guaranteed linear |
-| Capture groups | Full support (numbered and named) | Not supported |
+| Capture groups | Full support (numbered and named) | Numbered groups via two-pass extraction (resharp match + `regex` crate group extraction). Named groups not supported |
 | Lazy quantifiers | `.*?`, `.+?`, etc. | Not supported |
 | Overlapped matching | `finditer(overlapped=True)` | Not supported (`find_all` is non-overlapping) |
 | Matching semantics | Leftmost-first | Leftmost-longest |
@@ -170,7 +171,7 @@ EstNLTK provides a `regex_library` subpackage for building regex patterns progra
 
 **Notes:**
 - These are development-time tools for building and testing regex patterns. They produce standard regex strings that can be passed to either engine.
-- Since resharp accepts standard regex syntax (minus capture groups and lazy quantifiers), patterns built with `regex_library` can often be used directly — just remove capture groups.
+- Since resharp accepts standard regex syntax (minus lazy quantifiers), patterns built with `regex_library` can often be used directly. Capture groups are supported via two-pass extraction.
 
 ---
 
@@ -262,7 +263,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Scenario | EstNLTK | estnltk-rs |
 |----------|---------|------------|
 | Invalid regex pattern | `regex.error` at `Regex()` construction | `PyValueError` at tagger construction |
-| `group != 0` | Silently uses specified group | `PyValueError` — rejected at construction |
+| `group != 0` | Silently uses specified group | Two-pass extraction: resharp finds full match, `regex` crate extracts group. `PyValueError` if group index exceeds capture count or pattern uses resharp-only syntax |
 | `overlapped = True` | Uses `regex.finditer(overlapped=True)` | Not supported (no parameter; resharp returns non-overlapping) |
 | Invalid conflict_resolver string | `ValueError` at `_make_layer` time | `PyValueError` at construction time |
 | Conflicting patterns in Ruleset | `ValueError` from `Ruleset.add_rules` | `PyValueError` when `unique_patterns=true` (default: duplicates allowed) |
@@ -277,12 +278,13 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Test Area | EstNLTK | estnltk-rs |
 |-----------|---------|------------|
 | Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (6 tests) + `src/tagger.rs` (22 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (8 tests) + `src/tagger.rs` (32 unit tests) |
 | Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (22 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
 | Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
 | CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `tests/test_csv_loader.rs` (5 tests) + `src/csv_loader.rs` (10 unit tests) |
+| Capture group extraction | Implicit (group parameter in rules) | 13 unit tests + 2 integration tests (basic, multibyte, mixed rules, error cases) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
 | SpanTagger tests | Separate test file | — |
@@ -297,7 +299,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Tagger types (4) | 0 | 2 | 2 |
 | RegexTagger parameters (11) | 6 | 2 | 3 |
 | SubstringTagger parameters (12) | 9 | 1 | 2 |
-| Extraction rules (6 features) | 2 | 3 | 1 |
+| Extraction rules (6 features) | 3 | 2 | 1 |
 | Rulesets (7 features) | 2 | 4 | 1 |
 | Conflict strategies (7) | 6 | 0 | 1 |
 | Decorator pipeline (6 stages) | 2 | 0 | 3 (+1 N/A) |
@@ -305,8 +307,8 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | Regex library classes (4) | 0 | 0 | 4 |
 | Data model (13 concepts) | 2 | 5 | 6 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for group=0 patterns with static attributes. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 103 Rust tests total (72 unit + 31 integration).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. CSV rule loading with typed columns (int, float, string, bool). Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). Verified by 37 cross-implementation tests (23 regex + 14 substring) including Estonian multi-byte text. 115 Rust tests total (82 unit + 33 integration).
 
-**Biggest gaps:** Decorators (global and dynamic), capture groups, overlapped regex matching, other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
+**Biggest gaps:** Decorators (global and dynamic), overlapped regex matching, other tagger types (Span/Phrase), regex library composition tools, morphological expanders.
 
 **By design, not ported:** Features tied to Python runtime (decorators, `re.Match` objects, arbitrary attribute types, callable conflict resolvers, morphological expanders) and EstNLTK's layer infrastructure (parent/enveloping relationships, `Text` object integration).

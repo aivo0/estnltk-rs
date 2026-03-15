@@ -19,15 +19,6 @@ pub struct RegexTagger {
 impl RegexTagger {
     /// Create a new tagger, validating configuration.
     pub fn new(rules: Vec<ExtractionRule>, config: TaggerConfig) -> Result<Self, String> {
-        for (i, rule) in rules.iter().enumerate() {
-            if rule.group != 0 {
-                return Err(format!(
-                    "Rule {}: group={} not supported. resharp has no capture groups; only group=0 (full match) is allowed.",
-                    i, rule.group
-                ));
-            }
-        }
-
         // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
         if config.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
@@ -59,6 +50,15 @@ impl RegexTagger {
     }
 
     /// Extract raw matches from all rules, converting byte→char offsets.
+    ///
+    /// For rules with `group > 0`, a two-pass approach narrows each resharp
+    /// match to the requested capture group using an anchored `regex::Regex`:
+    ///
+    /// 1. resharp finds the full match (group 0) at byte offsets `[start, end]`
+    /// 2. The anchored regex `^(?:<pattern>)$` runs on the substring `text[start..end]`
+    /// 3. The anchoring forces the `regex` crate to cover the entire substring,
+    ///    eliminating leftmost-first vs leftmost-longest divergence
+    /// 4. The requested capture group's byte offsets are extracted and adjusted
     fn extract_matches(&self, text: &str) -> Vec<MatchEntry> {
         let b2c = byte_to_char_map(text);
         let text_bytes = text.as_bytes();
@@ -70,8 +70,28 @@ impl RegexTagger {
                 Err(_) => continue,
             };
             for m in found {
-                let char_start = b2c[m.start];
-                let char_end = b2c[m.end];
+                let (byte_start, byte_end) = if rule.group == 0 {
+                    (m.start, m.end)
+                } else {
+                    // Two-pass: narrow to capture group.
+                    let capture_re = rule.capture_re.as_ref().unwrap();
+                    let substring = match text.get(m.start..m.end) {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    if let Some(caps) = capture_re.captures(substring) {
+                        if let Some(group_match) = caps.get(rule.group as usize) {
+                            (m.start + group_match.start(), m.start + group_match.end())
+                        } else {
+                            continue; // Group didn't participate in this match
+                        }
+                    } else {
+                        continue; // Anchored pattern didn't match substring
+                    }
+                };
+
+                let char_start = b2c[byte_start];
+                let char_end = b2c[byte_end];
                 // Skip zero-length matches.
                 if char_start == char_end {
                     continue;
@@ -190,16 +210,50 @@ impl RegexTagger {
 }
 
 /// Convenience: build an ExtractionRule from components.
+///
+/// When `group > 0`, compiles an additional anchored `regex::Regex` pattern
+/// (`^(?:<pattern>)$`) for capture group extraction. This is used in a two-pass
+/// approach: resharp finds the full match, then the anchored regex extracts the
+/// requested capture group from the matched substring.
 pub fn make_rule(
     pattern: &str,
     attributes: HashMap<String, AnnotationValue>,
     group: u32,
     priority: i32,
 ) -> Result<ExtractionRule, String> {
-    let compiled = resharp::Regex::new(pattern).map_err(|e| format!("Regex compile error for '{}': {}", pattern, e))?;
+    let compiled = resharp::Regex::new(pattern)
+        .map_err(|e| format!("Regex compile error for '{}': {}", pattern, e))?;
+
+    let capture_re = if group > 0 {
+        let anchored = format!("^(?:{})$", pattern);
+        let re = regex::Regex::new(&anchored).map_err(|e| {
+            format!(
+                "Capture group extraction failed for pattern '{}': {}. \
+                 Patterns using resharp-only syntax (intersection, complement) \
+                 cannot use capture groups (group > 0).",
+                pattern, e
+            )
+        })?;
+        // Validate that the requested group exists in the pattern.
+        // captures_len() returns group count including group 0.
+        if group as usize >= re.captures_len() {
+            return Err(format!(
+                "Rule requests group={} but pattern '{}' only has {} capture group(s) (0..{}).",
+                group,
+                pattern,
+                re.captures_len() - 1,
+                re.captures_len() - 1
+            ));
+        }
+        Some(re)
+    } else {
+        None
+    };
+
     Ok(ExtractionRule {
         pattern_str: pattern.to_string(),
         compiled,
+        capture_re,
         attributes,
         group,
         priority,
@@ -275,13 +329,153 @@ mod tests {
         assert_eq!(result.spans[0].span, MatchSpan::new(0, 5));
     }
 
+    // ── Capture group tests ────────────────────────────────────────────
+
     #[test]
-    fn test_group_nonzero_rejected() {
-        let mut rule = make_rule("test", HashMap::new(), 0, 0).unwrap();
-        rule.group = 1;
-        let result = RegexTagger::new(vec![rule], default_config());
-        assert!(result.is_err());
+    fn test_capture_group_basic() {
+        // Pattern: (Mr\.\s+)(\w+) — group 2 extracts the name.
+        // Text: "Hello Mr. Smith there"
+        //         0123456789...
+        // resharp matches "Mr. Smith" (chars 6..15)
+        // group 2 = "Smith" (chars 10..15)
+        let rule = make_rule(r"(Mr\.\s+)(\w+)", HashMap::new(), 2, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("Hello Mr. Smith there");
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].span, MatchSpan::new(10, 15));
     }
+
+    #[test]
+    fn test_capture_group_1() {
+        // Same pattern, but extract group 1 ("Mr. ").
+        let rule = make_rule(r"(Mr\.\s+)(\w+)", HashMap::new(), 1, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("Hello Mr. Smith there");
+        assert_eq!(result.spans.len(), 1);
+        // "Mr. " = chars 6..10
+        assert_eq!(result.spans[0].span, MatchSpan::new(6, 10));
+    }
+
+    #[test]
+    fn test_capture_group_multibyte() {
+        // Estonian text: extract word after "Hr. " (Mr. in Estonian).
+        // "Tere Hr. Tamm ja teised"
+        //  T(0) e(1) r(2) e(3) ' '(4) H(5) r(6) .(7) ' '(8) T(9) a(10) m(11) m(12) ' '(13) ...
+        let rule = make_rule(r"(Hr\.\s+)(\w+)", HashMap::new(), 2, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("Tere Hr. Tamm ja teised");
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].span, MatchSpan::new(9, 13)); // "Tamm"
+    }
+
+    #[test]
+    fn test_capture_group_multibyte_estonian_chars() {
+        // Extract the accented word from a pattern.
+        // "aasta: 2024, koht: Põltsamaa, linn"
+        // Pattern captures the place name after "koht: "
+        let rule = make_rule(r"(koht:\s+)(\w+)", HashMap::new(), 2, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("aasta: 2024, koht: Põltsamaa, linn");
+        assert_eq!(result.spans.len(), 1);
+        // "koht: Põltsamaa" is the full match.
+        // "Põltsamaa" is group 2.
+        // Count: a(0) a(1) s(2) t(3) a(4) :(5) ' '(6) 2(7) 0(8) 2(9) 4(10)
+        //        ,(11) ' '(12) k(13) o(14) h(15) t(16) :(17) ' '(18)
+        //        P(19) õ(20) l(21) t(22) s(23) a(24) m(25) a(26) a(27) ,(28)
+        assert_eq!(result.spans[0].span, MatchSpan::new(19, 28)); // "Põltsamaa"
+    }
+
+    #[test]
+    fn test_capture_group_multiple_matches() {
+        // Multiple matches, each narrowed to group 1.
+        let rule = make_rule(r"(\d+) EUR", HashMap::new(), 1, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("Hind: 100 EUR ja 250 EUR");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(6, 9)); // "100"
+        assert_eq!(result.spans[1].span, MatchSpan::new(17, 20)); // "250"
+    }
+
+    #[test]
+    fn test_capture_group_with_attributes() {
+        // Attributes still propagate correctly with capture groups.
+        let mut attrs = HashMap::new();
+        attrs.insert(
+            "type".to_string(),
+            AnnotationValue::Str("amount".to_string()),
+        );
+        let rule = make_rule(r"(\d+) EUR", attrs, 1, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.output_attributes = vec!["type".to_string()];
+        let tagger = RegexTagger::new(vec![rule], cfg).unwrap();
+        let result = tagger.tag("Hind: 100 EUR");
+        assert_eq!(result.spans.len(), 1);
+        assert_eq!(result.spans[0].span, MatchSpan::new(6, 9));
+        assert_eq!(
+            result.spans[0].annotations[0].0.get("type"),
+            Some(&AnnotationValue::Str("amount".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_capture_group_mixed_rules() {
+        // Mix group=0 and group>0 rules in the same tagger.
+        let r1 = make_rule(r"(\d+) EUR", HashMap::new(), 1, 0).unwrap(); // group 1 → digits
+        let r2 = make_rule(r"USD", HashMap::new(), 0, 0).unwrap(); // group 0 → full match
+        let tagger = RegexTagger::new(vec![r1, r2], default_config()).unwrap();
+        let result = tagger.tag("100 EUR and USD");
+        assert_eq!(result.spans.len(), 2);
+        assert_eq!(result.spans[0].span, MatchSpan::new(0, 3)); // "100" (narrowed)
+        assert_eq!(result.spans[1].span, MatchSpan::new(12, 15)); // "USD" (full match)
+    }
+
+    #[test]
+    fn test_capture_group_zero_length_skipped() {
+        // If the captured group is zero-length, it should be skipped.
+        // Pattern: (a*)(b+) on "bbb" — group 1 matches "" (zero-length), group 2 matches "bbb".
+        let rule = make_rule(r"(a*)(b+)", HashMap::new(), 1, 0).unwrap();
+        let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
+        let result = tagger.tag("bbb");
+        // group 1 = "" (zero-length), should be skipped.
+        assert_eq!(result.spans.len(), 0);
+    }
+
+    #[test]
+    fn test_capture_group_invalid_group_index() {
+        // Pattern has 2 groups, requesting group 3 should fail at construction.
+        let result = make_rule(r"(a)(b)", HashMap::new(), 3, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only has 2 capture group(s)"));
+    }
+
+    #[test]
+    fn test_capture_group_no_groups_in_pattern() {
+        // Pattern has no capture groups, requesting group 1 should fail.
+        let result = make_rule(r"hello", HashMap::new(), 1, 0);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("only has 0 capture group(s)"));
+    }
+
+    #[test]
+    fn test_capture_group_with_conflict_resolution() {
+        // Two group>0 rules with overlapping narrowed spans.
+        let r1 = make_rule(r"(Mr\.\s+)(\w+)", HashMap::new(), 2, 0).unwrap();
+        let r2 = make_rule(r"\w+", HashMap::new(), 0, 0).unwrap();
+        let mut cfg = default_config();
+        cfg.conflict_strategy = ConflictStrategy::KeepMaximal;
+        let tagger = RegexTagger::new(vec![r1, r2], cfg).unwrap();
+        let result = tagger.tag("Mr. Smith");
+        // r1 narrowed to "Smith" (5,9), r2 matches "Mr" (0,2) and "Smith" (4,9)
+        // Wait — resharp is leftmost-longest on "Mr. Smith":
+        //   r2 "\w+" matches "Mr" (no, resharp gives leftmost-longest: first word is "Mr")
+        // Actually \w+ doesn't match "." or " ", so matches are: "Mr" and "Smith"
+        // r1 full match "Mr. Smith" narrowed to group 2 "Smith"
+        // So we have spans: "Smith"(4,9) from r1, "Mr"(0,2) from r2, "Smith"(4,9) from r2
+        // After KEEP_MAXIMAL: "Smith" subsumes nothing, "Mr" subsumes nothing — all kept
+        assert!(result.spans.len() >= 2);
+    }
+
+    // ── End capture group tests ──────────────────────────────────────
 
     #[test]
     fn test_attributes_propagated() {

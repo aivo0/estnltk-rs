@@ -134,6 +134,10 @@ impl TagResult {
 pub struct ExtractionRule {
     pub pattern_str: String,
     pub compiled: resharp::Regex,
+    /// Anchored `regex::Regex` for capture group extraction (only when `group > 0`).
+    /// Compiled as `^(?:<pattern>)$` so it matches exactly the substring that
+    /// resharp matched, eliminating leftmost-first vs leftmost-longest divergence.
+    pub capture_re: Option<regex::Regex>,
     pub attributes: HashMap<String, AnnotationValue>,
     pub group: u32,
     pub priority: i32,
@@ -143,8 +147,9 @@ impl std::fmt::Debug for ExtractionRule {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExtractionRule")
             .field("pattern_str", &self.pattern_str)
-            .field("attributes", &self.attributes)
             .field("group", &self.group)
+            .field("has_capture_re", &self.capture_re.is_some())
+            .field("attributes", &self.attributes)
             .field("priority", &self.priority)
             .finish()
     }
