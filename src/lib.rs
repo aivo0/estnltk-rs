@@ -1,6 +1,7 @@
 pub mod byte_char;
 pub mod conflict;
 pub mod csv_loader;
+pub mod string_list;
 pub mod substring_tagger;
 pub mod tagger;
 pub mod types;
@@ -444,6 +445,37 @@ fn rs_load_rules_csv(
     csv_rules_to_pylist(py, &rules)
 }
 
+/// Build a regex alternation pattern from a list of literal strings.
+///
+/// Port of EstNLTK's `StringList` from the `regex_library` subpackage.
+/// Produces a non-capture group pattern like `(?:longest|medium|short)`
+/// with strings sorted by length (longest first) for greedy matching.
+///
+/// Args:
+///     strings: List of literal strings to match.
+///     replacements: Optional dict mapping single characters to regex patterns
+///                   (e.g., `{" ": r"\s+"}` to allow flexible whitespace).
+///     ignore_case: If True, convert all strings to case-insensitive form
+///                  using `[Xx]` character class notation.
+///     ignore_case_flags: Optional per-string list of bools overriding
+///                        `ignore_case`. Must match length of `strings`.
+///
+/// Returns:
+///     A regex pattern string like `(?:choice1|choice2|...)`.
+#[pyfunction]
+#[pyo3(signature = (strings, replacements=None, ignore_case=false, ignore_case_flags=None))]
+fn rs_string_list_pattern(
+    strings: Vec<String>,
+    replacements: Option<HashMap<String, String>>,
+    ignore_case: bool,
+    ignore_case_flags: Option<Vec<bool>>,
+) -> PyResult<String> {
+    let repl = replacements.unwrap_or_default();
+    let flags_ref = ignore_case_flags.as_deref();
+    string_list::build_string_list_pattern(&strings, &repl, ignore_case, flags_ref)
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))
+}
+
 /// Python module definition.
 #[pymodule]
 fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -452,5 +484,6 @@ fn estnltk_regex_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(rs_regex_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_substring_tag, m)?)?;
     m.add_function(wrap_pyfunction!(rs_load_rules_csv, m)?)?;
+    m.add_function(wrap_pyfunction!(rs_string_list_pattern, m)?)?;
     Ok(())
 }
