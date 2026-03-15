@@ -3,7 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    let vabamorf_root = PathBuf::from("../../estnltk-src/estnltk");
+    let vabamorf_root = PathBuf::from("../vabamorf-cpp");
     let src_root = vabamorf_root.join("src");
     let inc_root = vabamorf_root.join("include");
 

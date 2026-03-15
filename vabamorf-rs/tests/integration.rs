@@ -2,7 +2,7 @@ use std::path::Path;
 use vabamorf_rs::{syllabify, Vabamorf};
 
 fn dct_dir() -> &'static Path {
-    Path::new("../../estnltk-src/estnltk/estnltk/vabamorf/dct/2020-01-22_sp")
+    Path::new("../vabamorf-cpp/dct")
 }
 
 fn make_vm() -> Vabamorf {
