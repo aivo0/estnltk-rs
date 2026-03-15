@@ -16,7 +16,7 @@ fn make_input(
             .into_iter()
             .map(|(start, end, anns)| TaggedSpan {
                 span: MatchSpan::new(start, end),
-                annotations: anns.into_iter().map(|a| Annotation(a)).collect(),
+                annotations: anns.into_iter().map(Annotation::from).collect(),
             })
             .collect(),
     }
@@ -76,19 +76,19 @@ fn test_estonian_lemma_vocabulary() {
 
     assert_eq!(result.spans[0].span, MatchSpan::new(0, 6));
     assert_eq!(
-        result.spans[0].annotations[0].0.get("value"),
+        result.spans[0].annotations[0].get("value"),
         Some(&AnnotationValue::Str("T".to_string()))
     );
 
     assert_eq!(result.spans[1].span, MatchSpan::new(7, 12));
     assert_eq!(
-        result.spans[1].annotations[0].0.get("value"),
+        result.spans[1].annotations[0].get("value"),
         Some(&AnnotationValue::Str("P".to_string()))
     );
 
     assert_eq!(result.spans[2].span, MatchSpan::new(13, 20));
     assert_eq!(
-        result.spans[2].annotations[0].0.get("value"),
+        result.spans[2].annotations[0].get("value"),
         Some(&AnnotationValue::Str("K".to_string()))
     );
 }
@@ -120,7 +120,7 @@ fn test_ambiguous_input_one_match() {
     assert_eq!(result.spans.len(), 1);
     assert_eq!(result.spans[0].annotations.len(), 1);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("value"),
+        result.spans[0].annotations[0].get("value"),
         Some(&AnnotationValue::Str("finance".to_string()))
     );
 }
@@ -162,14 +162,14 @@ fn test_pipeline_regex_to_span() {
         spans: vec![
             TaggedSpan {
                 span: MatchSpan::new(0, 5),
-                annotations: vec![Annotation(HashMap::from([
+                annotations: vec![Annotation::from(HashMap::from([
                     ("type".to_string(), AnnotationValue::Str("word".to_string())),
                     ("match".to_string(), AnnotationValue::Str("tundi".to_string())),
                 ]))],
             },
             TaggedSpan {
                 span: MatchSpan::new(6, 12),
-                annotations: vec![Annotation(HashMap::from([
+                annotations: vec![Annotation::from(HashMap::from([
                     ("type".to_string(), AnnotationValue::Str("email".to_string())),
                     ("match".to_string(), AnnotationValue::Str("a@b.ee".to_string())),
                 ]))],
@@ -202,11 +202,11 @@ fn test_pipeline_regex_to_span() {
     let result = tagger.tag(&regex_output);
     assert_eq!(result.spans.len(), 2);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("category"),
+        result.spans[0].annotations[0].get("category"),
         Some(&AnnotationValue::Str("text".to_string()))
     );
     assert_eq!(
-        result.spans[1].annotations[0].0.get("category"),
+        result.spans[1].annotations[0].get("category"),
         Some(&AnnotationValue::Str("contact".to_string()))
     );
 }
@@ -262,7 +262,7 @@ fn test_pattern_attribute_recorded() {
 
     let result = tagger.tag(&input);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("_pattern_"),
+        result.spans[0].annotations[0].get("_pattern_"),
         Some(&AnnotationValue::Str("koer".to_string()))
     );
 }

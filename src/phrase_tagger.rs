@@ -142,7 +142,7 @@ impl PhraseTagger {
         for tagged_span in &input.spans {
             let mut values = HashSet::new();
             for annotation in &tagged_span.annotations {
-                let value_str = match annotation.0.get(&self.config.input_attribute) {
+                let value_str = match annotation.get(&self.config.input_attribute) {
                     Some(AnnotationValue::Str(s)) => {
                         if self.config.ignore_case {
                             s.to_lowercase()
@@ -340,7 +340,7 @@ impl PhraseTagger {
 
                 // Copy static attributes from rule.
                 for (k, v) in &rule.attributes {
-                    annotation.0.insert(k.clone(), v.clone());
+                    annotation.insert(k.clone(), v.clone());
                 }
 
                 // Add phrase attribute.
@@ -352,19 +352,15 @@ impl PhraseTagger {
                             .map(|s| AnnotationValue::Str(s.clone()))
                             .collect(),
                     );
-                    annotation.0.insert(attr_name.clone(), phrase_val);
+                    annotation.insert(attr_name.clone(), phrase_val);
                 }
 
                 // Optionally add group/priority/pattern attributes.
                 if let Some(ref attr_name) = self.config.group_attribute {
-                    annotation
-                        .0
-                        .insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
+                    annotation.insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
                 }
                 if let Some(ref attr_name) = self.config.priority_attribute {
-                    annotation
-                        .0
-                        .insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
+                    annotation.insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
                 }
                 if let Some(ref attr_name) = self.config.pattern_attribute {
                     // Pattern attribute stores the phrase tuple (same as phrase_attribute
@@ -376,7 +372,7 @@ impl PhraseTagger {
                             .map(|s| AnnotationValue::Str(s.clone()))
                             .collect(),
                     );
-                    annotation.0.insert(attr_name.clone(), phrase_val);
+                    annotation.insert(attr_name.clone(), phrase_val);
                 }
 
                 // Normalize: fill missing output_attributes with Null.
@@ -455,7 +451,7 @@ mod tests {
                 .into_iter()
                 .map(|(start, end, anns)| TaggedSpan {
                     span: MatchSpan::new(start, end),
-                    annotations: anns.into_iter().map(Annotation).collect(),
+                    annotations: anns.into_iter().map(Annotation::from).collect(),
                 })
                 .collect(),
         }
@@ -507,12 +503,12 @@ mod tests {
         assert_eq!(result.spans[0].spans[1], MatchSpan::new(21, 28));
         assert_eq!(result.spans[0].bounding_span, MatchSpan::new(13, 28));
         assert_eq!(
-            result.spans[0].annotations[0].0.get("value"),
+            result.spans[0].annotations[0].get("value"),
             Some(&AnnotationValue::Str("ORG".to_string()))
         );
         // Check phrase attribute.
         assert_eq!(
-            result.spans[0].annotations[0].0.get("phrase"),
+            result.spans[0].annotations[0].get("phrase"),
             Some(&AnnotationValue::List(vec![
                 AnnotationValue::Str("euroopa".to_string()),
                 AnnotationValue::Str("liit".to_string()),
@@ -851,10 +847,10 @@ mod tests {
 
         let result = tagger.tag(&input);
         let a = &result.spans[0].annotations[0];
-        assert_eq!(a.0.get("_group_"), Some(&AnnotationValue::Int(5)));
-        assert_eq!(a.0.get("_priority_"), Some(&AnnotationValue::Int(2)));
+        assert_eq!(a.get("_group_"), Some(&AnnotationValue::Int(5)));
+        assert_eq!(a.get("_priority_"), Some(&AnnotationValue::Int(2)));
         assert_eq!(
-            a.0.get("_pattern_"),
+            a.get("_pattern_"),
             Some(&AnnotationValue::List(vec![
                 AnnotationValue::Str("euroopa".to_string()),
                 AnnotationValue::Str("liit".to_string()),
@@ -883,7 +879,7 @@ mod tests {
 
         let result = tagger.tag(&input);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("matched_phrase"),
+            result.spans[0].annotations[0].get("matched_phrase"),
             Some(&AnnotationValue::List(vec![
                 AnnotationValue::Str("euroopa".to_string()),
                 AnnotationValue::Str("liit".to_string()),
@@ -913,7 +909,7 @@ mod tests {
         let result = tagger.tag(&input);
         assert_eq!(result.spans.len(), 1);
         // No phrase attribute in annotation.
-        assert!(result.spans[0].annotations[0].0.get("phrase").is_none());
+        assert!(result.spans[0].annotations[0].get("phrase").is_none());
     }
 
     #[test]
@@ -947,11 +943,11 @@ mod tests {
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].annotations.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("value"),
+            result.spans[0].annotations[0].get("value"),
             Some(&AnnotationValue::Str("ORG".to_string()))
         );
         assert_eq!(
-            result.spans[0].annotations[1].0.get("value"),
+            result.spans[0].annotations[1].get("value"),
             Some(&AnnotationValue::Str("ENTITY".to_string()))
         );
     }
@@ -1046,8 +1042,8 @@ mod tests {
 
         let result = tagger.tag(&input);
         let a = &result.spans[0].annotations[0];
-        assert_eq!(a.0.get("x"), Some(&AnnotationValue::Int(1)));
-        assert_eq!(a.0.get("y"), Some(&AnnotationValue::Null));
+        assert_eq!(a.get("x"), Some(&AnnotationValue::Int(1)));
+        assert_eq!(a.get("y"), Some(&AnnotationValue::Null));
     }
 
     #[test]

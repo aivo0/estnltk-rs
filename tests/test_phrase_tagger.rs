@@ -16,7 +16,7 @@ fn make_input(
             .into_iter()
             .map(|(start, end, anns)| TaggedSpan {
                 span: MatchSpan::new(start, end),
-                annotations: anns.into_iter().map(Annotation).collect(),
+                annotations: anns.into_iter().map(Annotation::from).collect(),
             })
             .collect(),
     }
@@ -97,8 +97,8 @@ fn test_euroopa_liit_scenario() {
     assert_eq!(result.spans[0].annotations.len(), 2);
 
     // Check phrase attributes.
-    let phrase0 = result.spans[0].annotations[0].0.get("phrase").unwrap();
-    let phrase1 = result.spans[0].annotations[1].0.get("phrase").unwrap();
+    let phrase0 = result.spans[0].annotations[0].get("phrase").unwrap();
+    let phrase1 = result.spans[0].annotations[1].get("phrase").unwrap();
 
     // One should have ("euroopa", "liit") and the other ("euroopa", "liidu").
     let expected_phrases = vec![
@@ -311,12 +311,12 @@ fn test_multiple_non_overlapping_phrases() {
     assert_eq!(result.spans.len(), 2);
     assert_eq!(result.spans[0].bounding_span, MatchSpan::new(0, 14));
     assert_eq!(
-        result.spans[0].annotations[0].0.get("value"),
+        result.spans[0].annotations[0].get("value"),
         Some(&AnnotationValue::Str("LOC".to_string()))
     );
     assert_eq!(result.spans[1].bounding_span, MatchSpan::new(18, 30));
     assert_eq!(
-        result.spans[1].annotations[0].0.get("value"),
+        result.spans[1].annotations[0].get("value"),
         Some(&AnnotationValue::Str("ORG".to_string()))
     );
 }

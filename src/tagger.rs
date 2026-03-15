@@ -226,7 +226,7 @@ impl RegexTagger {
             if let Some(ref attr_name) = self.config.match_attribute {
                 let c2b = c2b.as_ref().unwrap();
                 let matched_text = &text[c2b[match_span.start]..c2b[match_span.end]];
-                annotation.0.insert(
+                annotation.insert(
                     attr_name.clone(),
                     AnnotationValue::Str(matched_text.to_string()),
                 );
@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].span, MatchSpan::new(6, 9));
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("amount".to_string()))
         );
     }
@@ -544,7 +544,7 @@ mod tests {
         let result = tagger.tag("abc 123 def");
         assert_eq!(result.spans.len(), 1);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("number".to_string()))
         );
     }
@@ -646,20 +646,20 @@ mod tests {
         assert_eq!(result.spans.len(), 2);
         // First span: rule 1 has both attributes
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("email".to_string()))
         );
         assert_eq!(
-            result.spans[0].annotations[0].0.get("color"),
+            result.spans[0].annotations[0].get("color"),
             Some(&AnnotationValue::Str("red".to_string()))
         );
         // Second span: rule 2 should have color=Null
         assert_eq!(
-            result.spans[1].annotations[0].0.get("type"),
+            result.spans[1].annotations[0].get("type"),
             Some(&AnnotationValue::Str("url".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("color"),
+            result.spans[1].annotations[0].get("color"),
             Some(&AnnotationValue::Null)
         );
     }
@@ -687,7 +687,7 @@ mod tests {
         // Only the first annotation is kept.
         assert_eq!(result.spans[0].annotations.len(), 1);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("greeting".to_string()))
         );
     }
@@ -865,7 +865,7 @@ mod tests {
         assert_eq!(result.spans.len(), 2);
         for span in &result.spans {
             assert_eq!(
-                span.annotations[0].0.get("type"),
+                span.annotations[0].get("type"),
                 Some(&AnnotationValue::Str("pair".to_string()))
             );
         }
@@ -932,11 +932,11 @@ mod tests {
         let result = tagger.tag("abc 123 def 456");
         assert_eq!(result.spans.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("match"),
+            result.spans[0].annotations[0].get("match"),
             Some(&AnnotationValue::Str("123".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("match"),
+            result.spans[1].annotations[0].get("match"),
             Some(&AnnotationValue::Str("456".to_string()))
         );
     }
@@ -951,11 +951,11 @@ mod tests {
         let result = tagger.tag("Hind: 100 EUR ja 250 EUR");
         assert_eq!(result.spans.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("match"),
+            result.spans[0].annotations[0].get("match"),
             Some(&AnnotationValue::Str("100".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("match"),
+            result.spans[1].annotations[0].get("match"),
             Some(&AnnotationValue::Str("250".to_string()))
         );
     }
@@ -970,11 +970,11 @@ mod tests {
         let result = tagger.tag("Tere Põltsamaa ja Võrumaa");
         assert_eq!(result.spans.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("matched"),
+            result.spans[0].annotations[0].get("matched"),
             Some(&AnnotationValue::Str("Põltsamaa".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("matched"),
+            result.spans[1].annotations[0].get("matched"),
             Some(&AnnotationValue::Str("Võrumaa".to_string()))
         );
     }
@@ -990,7 +990,7 @@ mod tests {
         let result = tagger.tag("HELLO world");
         assert_eq!(result.spans.len(), 1);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("match"),
+            result.spans[0].annotations[0].get("match"),
             Some(&AnnotationValue::Str("hello".to_string()))
         );
     }
@@ -1008,11 +1008,11 @@ mod tests {
         let result = tagger.tag("contact user@example.com today");
         assert_eq!(result.spans.len(), 1);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("email".to_string()))
         );
         assert_eq!(
-            result.spans[0].annotations[0].0.get("match"),
+            result.spans[0].annotations[0].get("match"),
             Some(&AnnotationValue::Str("user@example.com".to_string()))
         );
     }
@@ -1024,7 +1024,7 @@ mod tests {
         let tagger = RegexTagger::new(vec![rule], default_config()).unwrap();
         let result = tagger.tag("hello");
         assert_eq!(result.spans.len(), 1);
-        assert!(result.spans[0].annotations[0].0.get("match").is_none());
+        assert!(result.spans[0].annotations[0].get("match").is_none());
     }
 
     #[test]
@@ -1038,11 +1038,11 @@ mod tests {
         let result = tagger.tag("aaa");
         assert_eq!(result.spans.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("match"),
+            result.spans[0].annotations[0].get("match"),
             Some(&AnnotationValue::Str("aa".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("match"),
+            result.spans[1].annotations[0].get("match"),
             Some(&AnnotationValue::Str("aa".to_string()))
         );
     }

@@ -653,7 +653,7 @@ fn parse_tag_result(dict: &Bound<'_, PyDict>) -> PyResult<TagResult> {
             for (k, v) in ann_dict.iter() {
                 let key: String = k.extract()?;
                 let val = AnnotationValue::from_pyobject(&v)?;
-                annotation.0.insert(key, val);
+                annotation.insert(key, val);
             }
             annotations.push(annotation);
         }
@@ -1254,14 +1254,14 @@ impl PyVabamorf {
     fn noun_forms_expander(&self, word: &str) -> PyResult<Vec<String>> {
         let mut vm = self.inner.lock().unwrap();
         expander::noun_forms_expander(&mut vm, word)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 
     /// Default expander (delegates to noun_forms_expander).
     fn default_expander(&self, word: &str) -> PyResult<Vec<String>> {
         let mut vm = self.inner.lock().unwrap();
         expander::default_expander(&mut vm, word)
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
     }
 }
 
@@ -1271,7 +1271,7 @@ impl PyVabamorf {
 fn rs_noun_forms_expander(vabamorf: &PyVabamorf, word: &str) -> PyResult<Vec<String>> {
     let mut vm = vabamorf.inner.lock().unwrap();
     expander::noun_forms_expander(&mut vm, word)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
 /// Standalone: default expander using an RsVabamorf instance.
@@ -1280,7 +1280,7 @@ fn rs_noun_forms_expander(vabamorf: &PyVabamorf, word: &str) -> PyResult<Vec<Str
 fn rs_default_expander(vabamorf: &PyVabamorf, word: &str) -> PyResult<Vec<String>> {
     let mut vm = vabamorf.inner.lock().unwrap();
     expander::default_expander(&mut vm, word)
-        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e))
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))
 }
 
 /// Standalone: syllabify a word (does not require an RsVabamorf instance).

@@ -3,6 +3,11 @@ use std::collections::{HashMap, HashSet};
 use crate::types::TaggerError;
 
 /// Escape regex metacharacters in a string (like Python's `regex.escape()`).
+///
+/// NOTE: This intentionally escapes `#`, `&`, `-`, `~` which are NOT
+/// metacharacters in the Rust `regex` crate but ARE in Python's `regex`
+/// module and resharp's POSIX-extended syntax.  Using `regex::escape()`
+/// would under-escape for resharp patterns.
 fn regex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() * 2);
     for ch in s.chars() {

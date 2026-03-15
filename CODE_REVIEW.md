@@ -260,14 +260,19 @@ The Python-dict extraction path reimplements the matching logic. Consider extrac
 
 ## Prioritized Action Items
 
-| Priority | Item | Effort | Impact |
-|----------|------|--------|--------|
-| P0 | Cow<str> for non-lowercased text (#1) | Low | Every tag() call saves an allocation |
-| P1 | Store byte offsets for match_attribute (#4) | Medium | O(1) vs O(n) per match text extraction |
-| P1 | Double-buffer keep_minimal_matches (#9) | Low | Fewer allocations in conflict resolution |
-| P2 | Implement FromStr trait (#5) | Low | Better Rust idiom |
-| P2 | Remove unnecessary .clone() in check_unique (#7) | Trivial | Cleaner code |
-| P2 | Use char_indices instead of Vec<char> (#8) | Low | Avoid allocation in pattern processing |
-| P3 | Typed error enum (#3) | Medium | Better for direct Rust consumers |
-| P3 | Improve O(n^2) priority resolver (#2) | High | Only if n can be large |
-| P3 | Shared config struct (#12) | Medium | Reduce duplication |
+| Priority | Item | Status |
+|----------|------|--------|
+| P0 | Cow<str> for non-lowercased text (#1) | DONE |
+| P1 | Store byte offsets for match_attribute (#4) | DONE — `char_to_byte_map` in `byte_char.rs` |
+| P1 | Double-buffer keep_minimal_matches (#9) | DONE — `std::mem::swap` in `conflict.rs` |
+| P2 | Implement FromStr trait (#5) | DONE — `ConflictStrategy`, `ColumnType` |
+| P2 | Remove unnecessary .clone() in check_unique (#7) | DONE — contains-then-insert |
+| P2 | Use char_indices instead of Vec<char> (#8) | DONE — peekable iterator in `string_list.rs` |
+| P2 | Annotation Deref/DerefMut (#6) | DONE — private inner field, `Deref`/`DerefMut`/`From` |
+| P3 | Typed error enum (#3) | DONE — `TaggerError` in `types.rs` |
+| P3 | Improve O(n^2) priority resolver (#2) | DONE — early termination in `conflict.rs` |
+| P3 | has_missing_attributes sorted comparison (#13) | DONE — sorted `Vec` instead of `HashSet` |
+| -- | regex_escape intentional divergence (#11) | DOCUMENTED — comment in `string_list.rs` |
+| P3 | Shared config struct (#12) | DEFERRED — low ROI vs volume of field access changes |
+| -- | token_separators linear contains (#10) | DEFERRED — fine for typical 1-3 char sets |
+| -- | PhraseTagger extraction duplication (#14) | N/A — `PhraseTagger` has no `tag_from_py` path |

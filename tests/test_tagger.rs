@@ -137,7 +137,7 @@ fn test_priority_based_resolution() {
     // so priority=1 is removed. Only one span with label "high" remains.
     assert_eq!(result.spans.len(), 1);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("label"),
+        result.spans[0].annotations[0].get("label"),
         Some(&AnnotationValue::Str("high".to_string()))
     );
 }
@@ -153,7 +153,7 @@ fn test_pattern_attribute() {
     let result = tagger.tag("say hello");
 
     assert_eq!(
-        result.spans[0].annotations[0].0.get("_pattern_"),
+        result.spans[0].annotations[0].get("_pattern_"),
         Some(&AnnotationValue::Str("hello".to_string()))
     );
 }
@@ -179,7 +179,7 @@ fn test_capture_group_email_domain() {
     // group 2 = "example.com" = chars 24..35
     assert_eq!(result.spans[0].span, MatchSpan::new(24, 35));
     assert_eq!(
-        result.spans[0].annotations[0].0.get("type"),
+        result.spans[0].annotations[0].get("type"),
         Some(&AnnotationValue::Str("domain".to_string()))
     );
 }

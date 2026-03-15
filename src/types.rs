@@ -33,17 +33,10 @@ pub enum TaggerError {
 impl From<TaggerError> for pyo3::PyErr {
     fn from(err: TaggerError) -> pyo3::PyErr {
         match &err {
-            TaggerError::DuplicatePattern(_) | TaggerError::Config(_) => {
-                pyo3::exceptions::PyValueError::new_err(err.to_string())
-            }
-            TaggerError::InvalidRegex(_)
-            | TaggerError::PatternComposition(_)
-            | TaggerError::Automaton(_) => {
-                pyo3::exceptions::PyValueError::new_err(err.to_string())
-            }
             TaggerError::Csv(_) => {
                 pyo3::exceptions::PyIOError::new_err(err.to_string())
             }
+            _ => pyo3::exceptions::PyValueError::new_err(err.to_string()),
         }
     }
 }
@@ -136,8 +129,12 @@ impl AnnotationValue {
 
 /// A single annotation: attribute name → value.
 /// Maps to EstNLTK's `Annotation` (a dict).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Annotation(pub HashMap<String, AnnotationValue>);
+///
+/// Implements `Deref<Target=HashMap<String, AnnotationValue>>` and `DerefMut`
+/// so callers can use `annotation.get(...)`, `annotation.insert(...)`, etc.
+/// directly without accessing the inner field.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Annotation(HashMap<String, AnnotationValue>);
 
 impl Annotation {
     pub fn new() -> Self {
@@ -146,10 +143,30 @@ impl Annotation {
 
     pub fn to_pydict(&self, py: Python<'_>) -> PyResult<Py<PyDict>> {
         let dict = PyDict::new_bound(py);
-        for (k, v) in &self.0 {
+        for (k, v) in self.iter() {
             dict.set_item(k, v.to_pyobject(py))?;
         }
         Ok(dict.unbind())
+    }
+}
+
+impl std::ops::Deref for Annotation {
+    type Target = HashMap<String, AnnotationValue>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Annotation {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl From<HashMap<String, AnnotationValue>> for Annotation {
+    fn from(map: HashMap<String, AnnotationValue>) -> Self {
+        Self(map)
     }
 }
 
@@ -317,13 +334,18 @@ pub struct TaggerConfig {
 ///
 /// Returns `true` if some rules don't define the same set of attributes as others.
 /// Maps to EstNLTK's `AmbiguousRuleset.missing_attributes` property.
+///
+/// Uses sorted key comparison instead of `HashSet` — faster for the small
+/// attribute sets typical in tagger rules.
 pub fn has_missing_attributes(rules_attrs: &[&HashMap<String, AnnotationValue>]) -> bool {
     if rules_attrs.len() <= 1 {
         return false;
     }
-    let first_keys: HashSet<&String> = rules_attrs[0].keys().collect();
+    let mut first_keys: Vec<&String> = rules_attrs[0].keys().collect();
+    first_keys.sort();
     for attrs in &rules_attrs[1..] {
-        let keys: HashSet<&String> = attrs.keys().collect();
+        let mut keys: Vec<&String> = attrs.keys().collect();
+        keys.sort();
         if keys != first_keys {
             return true;
         }
@@ -362,8 +384,8 @@ pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), T
 /// get `None` (the layer's default value).
 pub fn normalize_annotation(annotation: &mut Annotation, output_attributes: &[String]) {
     for attr_name in output_attributes {
-        if !annotation.0.contains_key(attr_name) {
-            annotation.0.insert(attr_name.clone(), AnnotationValue::Null);
+        if !annotation.contains_key(attr_name) {
+            annotation.insert(attr_name.clone(), AnnotationValue::Null);
         }
     }
 }
@@ -382,20 +404,16 @@ pub fn build_rule_annotation(
 ) -> Annotation {
     let mut annotation = Annotation::new();
     for (k, v) in rule.attributes() {
-        annotation.0.insert(k.clone(), v.clone());
+        annotation.insert(k.clone(), v.clone());
     }
     if let Some(attr) = group_attribute {
-        annotation
-            .0
-            .insert(attr.to_string(), AnnotationValue::Int(rule.group() as i64));
+        annotation.insert(attr.to_string(), AnnotationValue::Int(rule.group() as i64));
     }
     if let Some(attr) = priority_attribute {
-        annotation
-            .0
-            .insert(attr.to_string(), AnnotationValue::Int(rule.priority() as i64));
+        annotation.insert(attr.to_string(), AnnotationValue::Int(rule.priority() as i64));
     }
     if let Some(attr) = pattern_attribute {
-        annotation.0.insert(
+        annotation.insert(
             attr.to_string(),
             AnnotationValue::Str(rule.pattern_str().to_string()),
         );

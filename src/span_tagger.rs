@@ -156,7 +156,7 @@ impl SpanTagger {
                 // common case-sensitive path. Non-string values need a
                 // temporary String from Display.
                 let owned_tmp;
-                let value_str: &str = match annotation.0.get(&self.config.input_attribute) {
+                let value_str: &str = match annotation.get(&self.config.input_attribute) {
                     Some(AnnotationValue::Str(s)) => s.as_str(),
                     Some(AnnotationValue::Int(i)) => {
                         owned_tmp = i.to_string();
@@ -309,7 +309,7 @@ mod tests {
                     span: MatchSpan::new(start, end),
                     annotations: anns
                         .into_iter()
-                        .map(|a| Annotation(a))
+                        .map(Annotation::from)
                         .collect(),
                 })
                 .collect(),
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].span, MatchSpan::new(0, 3));
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("animal".to_string()))
         );
     }
@@ -526,10 +526,10 @@ mod tests {
 
         let result = tagger.tag(&input);
         let ann = &result.spans[0].annotations[0];
-        assert_eq!(ann.0.get("_group_"), Some(&AnnotationValue::Int(5)));
-        assert_eq!(ann.0.get("_priority_"), Some(&AnnotationValue::Int(2)));
+        assert_eq!(ann.get("_group_"), Some(&AnnotationValue::Int(5)));
+        assert_eq!(ann.get("_priority_"), Some(&AnnotationValue::Int(2)));
         assert_eq!(
-            ann.0.get("_pattern_"),
+            ann.get("_pattern_"),
             Some(&AnnotationValue::Str("cat".to_string()))
         );
     }
@@ -643,7 +643,7 @@ mod tests {
             ambiguous: true,
             spans: vec![TaggedSpan {
                 span: MatchSpan::new(0, 5),
-                annotations: vec![Annotation(HashMap::from([
+                annotations: vec![Annotation::from(HashMap::from([
                     ("count".to_string(), AnnotationValue::Int(42)),
                 ]))],
             }],
@@ -675,8 +675,8 @@ mod tests {
 
         let result = tagger.tag(&input);
         let ann = &result.spans[0].annotations[0];
-        assert_eq!(ann.0.get("x"), Some(&AnnotationValue::Int(1)));
-        assert_eq!(ann.0.get("y"), Some(&AnnotationValue::Null));
+        assert_eq!(ann.get("x"), Some(&AnnotationValue::Int(1)));
+        assert_eq!(ann.get("y"), Some(&AnnotationValue::Null));
     }
 
     #[test]
@@ -755,19 +755,19 @@ mod tests {
             spans: vec![
                 TaggedSpan {
                     span: MatchSpan::new(0, 5),
-                    annotations: vec![Annotation(HashMap::from([
+                    annotations: vec![Annotation::from(HashMap::from([
                         ("lemma".to_string(), AnnotationValue::Str("tundma".to_string())),
                     ]))],
                 },
                 TaggedSpan {
                     span: MatchSpan::new(6, 11),
-                    annotations: vec![Annotation(HashMap::from([
+                    annotations: vec![Annotation::from(HashMap::from([
                         ("lemma".to_string(), AnnotationValue::Str("päike".to_string())),
                     ]))],
                 },
                 TaggedSpan {
                     span: MatchSpan::new(12, 19),
-                    annotations: vec![Annotation(HashMap::from([
+                    annotations: vec![Annotation::from(HashMap::from([
                         ("lemma".to_string(), AnnotationValue::Str("inimene".to_string())),
                     ]))],
                 },
@@ -807,12 +807,12 @@ mod tests {
         assert_eq!(result.spans.len(), 2);
         assert_eq!(result.spans[0].span, MatchSpan::new(0, 5));
         assert_eq!(
-            result.spans[0].annotations[0].0.get("value"),
+            result.spans[0].annotations[0].get("value"),
             Some(&AnnotationValue::Str("T".to_string()))
         );
         assert_eq!(result.spans[1].span, MatchSpan::new(6, 11));
         assert_eq!(
-            result.spans[1].annotations[0].0.get("value"),
+            result.spans[1].annotations[0].get("value"),
             Some(&AnnotationValue::Str("P".to_string()))
         );
     }

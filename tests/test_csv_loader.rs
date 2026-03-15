@@ -56,8 +56,8 @@ fn test_csv_to_regex_tagger_integration() {
     // Check that type attribute is carried through
     let first_ann = &result.spans[0].annotations[0];
     assert!(
-        first_ann.0.get("type") == Some(&AnnotationValue::Str("word".to_string()))
-            || first_ann.0.get("type") == Some(&AnnotationValue::Str("number".to_string()))
+        first_ann.get("type") == Some(&AnnotationValue::Str("word".to_string()))
+            || first_ann.get("type") == Some(&AnnotationValue::Str("number".to_string()))
     );
 }
 
@@ -109,7 +109,7 @@ fn test_csv_with_priority_resolution() {
     // Both rules match "hello". Priority resolver should keep only priority=0 ("high").
     assert_eq!(result.spans.len(), 1);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("label"),
+        result.spans[0].annotations[0].get("label"),
         Some(&AnnotationValue::Str("high".to_string()))
     );
 }
@@ -144,11 +144,11 @@ fn test_csv_estonian_patterns() {
 
     assert_eq!(result.spans.len(), 2);
     assert_eq!(
-        result.spans[0].annotations[0].0.get("label"),
+        result.spans[0].annotations[0].get("label"),
         Some(&AnnotationValue::Str("night".to_string()))
     );
     assert_eq!(
-        result.spans[1].annotations[0].0.get("label"),
+        result.spans[1].annotations[0].get("label"),
         Some(&AnnotationValue::Str("star".to_string()))
     );
 }
@@ -246,7 +246,7 @@ fn test_csv_regex_type_column_with_tagger() {
     let has_filter_re = result
         .spans
         .iter()
-        .any(|s| s.annotations[0].0.contains_key("filter_re"));
+        .any(|s| s.annotations[0].contains_key("filter_re"));
     assert!(has_filter_re, "filter_re attribute should be present in annotations");
 }
 

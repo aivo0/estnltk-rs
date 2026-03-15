@@ -339,15 +339,15 @@ mod tests {
         let result = tagger.tag("first second last");
         assert_eq!(result.spans.len(), 3);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("a"),
+            result.spans[0].annotations[0].get("a"),
             Some(&AnnotationValue::Int(1))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("b"),
+            result.spans[1].annotations[0].get("b"),
             Some(&AnnotationValue::Int(2))
         );
         assert_eq!(
-            result.spans[2].annotations[0].0.get("a"),
+            result.spans[2].annotations[0].get("a"),
             Some(&AnnotationValue::Int(3))
         );
     }
@@ -510,16 +510,16 @@ mod tests {
         assert_eq!(result.spans.len(), 2);
         // First span: has both attributes
         assert_eq!(
-            result.spans[0].annotations[0].0.get("score"),
+            result.spans[0].annotations[0].get("score"),
             Some(&AnnotationValue::Int(10))
         );
         // Second span: score should be Null
         assert_eq!(
-            result.spans[1].annotations[0].0.get("type"),
+            result.spans[1].annotations[0].get("type"),
             Some(&AnnotationValue::Str("noun".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("score"),
+            result.spans[1].annotations[0].get("score"),
             Some(&AnnotationValue::Null)
         );
     }
@@ -546,7 +546,7 @@ mod tests {
         assert_eq!(result.spans.len(), 1);
         assert_eq!(result.spans[0].annotations.len(), 1);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("type"),
+            result.spans[0].annotations[0].get("type"),
             Some(&AnnotationValue::Str("capital".to_string()))
         );
     }
@@ -636,11 +636,11 @@ mod tests {
         let result = tagger.tag("hello world");
         assert_eq!(result.spans.len(), 2);
         assert_eq!(
-            result.spans[0].annotations[0].0.get("_pattern"),
+            result.spans[0].annotations[0].get("_pattern"),
             Some(&AnnotationValue::Str("hello".to_string()))
         );
         assert_eq!(
-            result.spans[1].annotations[0].0.get("_pattern"),
+            result.spans[1].annotations[0].get("_pattern"),
             Some(&AnnotationValue::Str("world".to_string()))
         );
     }
