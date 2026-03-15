@@ -15,7 +15,13 @@
 | `src/byte_char.rs` | UTF-8 byte↔char offset conversion (resharp returns byte offsets, EstNLTK uses char offsets) |
 | `src/conflict.rs` | Conflict resolution: `keep_maximal`, `keep_minimal`, priority resolver |
 | `src/tagger.rs` | RegexTagger core pipeline |
-| `src/lib.rs` | PyO3 bindings: `RsRegexTagger` class and `rs_regex_tag()` function |
+| `src/substring_tagger.rs` | SubstringTagger with Aho-Corasick multi-pattern matching |
+| `src/csv_loader.rs` | CSV rule loading with typed columns |
+| `src/string_list.rs` | Pattern composition (StringList, ChoiceGroup) |
+| `src/expander.rs` | Morphological rule expansion via Vabamorf |
+| `src/lib.rs` | PyO3 bindings: `RsRegexTagger`, `RsSubstringTagger`, `RsVabamorf` |
+| `vabamorf-rs/` | Safe Rust wrapper around C++ Vabamorf (analysis, synthesis, spellcheck, syllabification) |
+| `vabamorf-sys/` | Raw FFI bindings to C++ Vabamorf |
 
 ## Setup
 
@@ -103,6 +109,34 @@ All benchmarks verify output parity — both implementations produce identical s
 - The RegexTagger speedup is modest at medium scale because resharp DFA compilation is a one-time cost amortized over matching, and the Python `regex` library is itself a C extension. The gap widens at larger scales.
 - SubstringTagger shows consistently higher speedup (3.6–3.7x) because the Rust Aho-Corasick implementation has lower per-match overhead than Python's.
 - Benchmarks run with `cargo bench` (Criterion) and `python benchmarks/rust_vs_python/bench_*.py`.
+
+### Vabamorf (Rust PyO3 vs Python SWIG — same C++ backend)
+
+Both implementations wrap the same C++ Vabamorf library. The benchmark measures binding overhead (PyO3 vs SWIG) and data marshalling differences.
+
+| Task | Input | Python (ms) | Rust (ms) | Speedup |
+|------|-------|-------------|-----------|---------|
+| analyze (disamb) | 10 words | 0.38 | 0.41 | 0.93x |
+| analyze (disamb) | 72 words | 3.01 | 3.20 | 0.94x |
+| analyze (disamb) | 264 words | 11.28 | 12.09 | 0.93x |
+| analyze (no disamb) | 72 words | 1.58 | 1.43 | **1.11x** |
+| synthesize | 20 calls | 0.23 | 0.25 | 0.94x |
+| spellcheck | 72 words | 6.10 | 6.12 | 1.00x |
+
+Performance is near-identical since both call the same C++ code. The Rust port's value is not speed but **integration**: morphological expansion feeds directly into SubstringTagger without crossing the Python boundary.
+
+### Rust-only Criterion: Vabamorf (`cargo bench --features vabamorf`)
+
+| Benchmark | Time |
+|-----------|------|
+| analyze disambiguated (6 words) | 263 µs |
+| analyze raw (6 words) | 89 µs |
+| analyze disambiguated (49 words) | 2.17 ms |
+| analyze raw (49 words) | 929 µs |
+| synthesize (10 calls) | 112 µs |
+| spellcheck (49 words) | 348 µs |
+| syllabify (49 words) | 24 µs |
+| noun_forms_expander (8 nouns) | 2.01 ms |
 
 ## Limitations
 

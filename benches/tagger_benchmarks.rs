@@ -348,8 +348,169 @@ fn bench_lowercase_overhead(c: &mut Criterion) {
     group.finish();
 }
 
+// ─── Vabamorf benchmarks (feature-gated) ────────────────────────────
+
+#[cfg(feature = "vabamorf")]
+mod vabamorf_benches {
+    use super::*;
+    use std::path::Path;
+    use vabamorf_rs::Vabamorf;
+
+    fn get_vm() -> Vabamorf {
+        Vabamorf::from_dct_dir(Path::new("vabamorf-cpp/dct"))
+            .expect("Failed to load Vabamorf dicts from vabamorf-cpp/dct")
+    }
+
+    /// Simple whitespace tokenizer for benchmark input.
+    fn tokenize(text: &str) -> Vec<&str> {
+        text.split_whitespace().collect()
+    }
+
+    const SENTENCE: &str = "Eesti Vabariik on demokraatlik riik Põhja-Euroopas";
+
+    const PARAGRAPH: &str = "\
+Eesti Vabariik on demokraatlik riik Põhja-Euroopas. Eesti piirneb põhjas ja läänes \
+Läänemeraga, lõunas Lätiga ja idas Venemaaga. Eesti pindala on 45 339 ruutkilomeetrit \
+ja rahvaarv on ligikaudu 1,3 miljonit. Pealinn ja suurim linn on Tallinn. Eesti on \
+Euroopa Liidu, NATO, Euroopa Nõukogu, OECD ja paljude teiste rahvusvaheliste \
+organisatsioonide liige.";
+
+    pub fn bench_analyze(c: &mut Criterion) {
+        let mut group = c.benchmark_group("vabamorf/analyze");
+
+        for (label, text) in [("sentence", SENTENCE), ("paragraph", PARAGRAPH)] {
+            let words = tokenize(text);
+            let word_refs: Vec<&str> = words.iter().copied().collect();
+
+            group.bench_with_input(
+                BenchmarkId::new("disambiguated", format!("{}_{}w", label, words.len())),
+                &word_refs,
+                |b, words| {
+                    let mut vm = get_vm();
+                    b.iter(|| {
+                        let result = vm.analyze(black_box(words), true, true, false, true, false);
+                        black_box(&result);
+                    });
+                },
+            );
+
+            group.bench_with_input(
+                BenchmarkId::new("raw", format!("{}_{}w", label, words.len())),
+                &word_refs,
+                |b, words| {
+                    let mut vm = get_vm();
+                    b.iter(|| {
+                        let result = vm.analyze(black_box(words), false, true, false, true, false);
+                        black_box(&result);
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+
+    pub fn bench_synthesize(c: &mut Criterion) {
+        let mut group = c.benchmark_group("vabamorf/synthesize");
+
+        let cases: Vec<(&str, &str, &str)> = vec![
+            ("maja", "sg n", "S"),
+            ("maja", "sg g", "S"),
+            ("maja", "sg p", "S"),
+            ("maja", "sg in", "S"),
+            ("maja", "pl n", "S"),
+            ("koer", "sg g", "S"),
+            ("linn", "sg in", "S"),
+            ("tegema", "da", "V"),
+            ("olema", "n", "V"),
+            ("minema", "s", "V"),
+        ];
+
+        group.bench_function("10_calls", |b| {
+            let mut vm = get_vm();
+            b.iter(|| {
+                for &(lemma, form, pos) in &cases {
+                    let result = vm.synthesize(
+                        black_box(lemma),
+                        black_box(form),
+                        black_box(pos),
+                        "",
+                        true,
+                        false,
+                    );
+                    black_box(&result);
+                }
+            });
+        });
+        group.finish();
+    }
+
+    pub fn bench_spellcheck(c: &mut Criterion) {
+        let mut group = c.benchmark_group("vabamorf/spellcheck");
+
+        let words = tokenize(PARAGRAPH);
+        let word_refs: Vec<&str> = words.iter().copied().collect();
+
+        group.bench_with_input(
+            BenchmarkId::new("check", format!("{}w", words.len())),
+            &word_refs,
+            |b, words| {
+                let mut vm = get_vm();
+                b.iter(|| {
+                    let result = vm.spellcheck(black_box(words), false);
+                    black_box(&result);
+                });
+            },
+        );
+        group.finish();
+    }
+
+    pub fn bench_syllabify(c: &mut Criterion) {
+        let mut group = c.benchmark_group("vabamorf/syllabify");
+
+        let words = tokenize(PARAGRAPH);
+
+        group.bench_function(format!("{}w", words.len()), |b| {
+            b.iter(|| {
+                for &word in &words {
+                    let result = vabamorf_rs::syllabify(black_box(word));
+                    black_box(&result);
+                }
+            });
+        });
+        group.finish();
+    }
+
+    pub fn bench_noun_expander(c: &mut Criterion) {
+        use estnltk_regex_rs::expander::noun_forms_expander;
+
+        let mut group = c.benchmark_group("vabamorf/noun_expander");
+        let nouns = ["maja", "koer", "linn", "mets", "järv", "saar", "keel", "riik"];
+
+        group.bench_function(format!("{}_nouns", nouns.len()), |b| {
+            let mut vm = get_vm();
+            b.iter(|| {
+                for &noun in &nouns {
+                    let result = noun_forms_expander(black_box(&mut vm), black_box(noun));
+                    black_box(&result);
+                }
+            });
+        });
+        group.finish();
+    }
+}
+
+#[cfg(feature = "vabamorf")]
 criterion_group!(
-    benches,
+    vabamorf_bench_group,
+    vabamorf_benches::bench_analyze,
+    vabamorf_benches::bench_synthesize,
+    vabamorf_benches::bench_spellcheck,
+    vabamorf_benches::bench_syllabify,
+    vabamorf_benches::bench_noun_expander,
+);
+
+criterion_group!(
+    tagger_bench_group,
     bench_regex_text_size,
     bench_regex_pattern_count,
     bench_substring_text_size,
@@ -358,4 +519,9 @@ criterion_group!(
     bench_regex_conflict_strategies,
     bench_lowercase_overhead,
 );
-criterion_main!(benches);
+
+#[cfg(feature = "vabamorf")]
+criterion_main!(tagger_bench_group, vabamorf_bench_group);
+
+#[cfg(not(feature = "vabamorf"))]
+criterion_main!(tagger_bench_group);
