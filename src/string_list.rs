@@ -42,17 +42,20 @@ fn is_regex_meta(ch: char) -> bool {
 /// Matches EstNLTK's `StringList.make_case_insensitive()`.
 fn make_case_insensitive(pattern: &str) -> String {
     let mut result = String::with_capacity(pattern.len() * 4);
-    let chars: Vec<char> = pattern.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        if chars[i] == '\\' && i + 1 < chars.len() {
-            // Escaped character — copy both the backslash and the next char verbatim
-            result.push(chars[i]);
-            result.push(chars[i + 1]);
-            i += 2;
-        } else if chars[i].is_alphabetic() {
-            let upper = chars[i].to_uppercase().to_string();
-            let lower = chars[i].to_lowercase().to_string();
+    let mut chars = pattern.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            if let Some(&next_ch) = chars.peek() {
+                // Escaped character — copy both the backslash and the next char verbatim
+                result.push(ch);
+                result.push(next_ch);
+                chars.next();
+            } else {
+                result.push(ch);
+            }
+        } else if ch.is_alphabetic() {
+            let upper = ch.to_uppercase().to_string();
+            let lower = ch.to_lowercase().to_string();
             if upper != lower {
                 result.push('[');
                 result.push_str(&upper);
@@ -60,12 +63,10 @@ fn make_case_insensitive(pattern: &str) -> String {
                 result.push(']');
             } else {
                 // Non-cased alphabetic character (e.g., some Unicode symbols)
-                result.push(chars[i]);
+                result.push(ch);
             }
-            i += 1;
         } else {
-            result.push(chars[i]);
-            i += 1;
+            result.push(ch);
         }
     }
     result
@@ -357,48 +358,57 @@ pub fn build_regex_pattern(
 
     // Parse template and substitute placeholders.
     // We scan for `{name}` sequences. Literal `{{` and `}}` are escaped braces.
+    // Since `{` and `}` are ASCII, we can use byte-level indexing directly.
     let mut result = String::with_capacity(template.len() * 2);
-    let chars: Vec<char> = template.chars().collect();
+    let bytes = template.as_bytes();
     let mut i = 0;
+    // Start of the current literal run (copied verbatim to result).
+    let mut literal_start = 0;
 
-    while i < chars.len() {
-        if chars[i] == '{' {
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            // Flush preceding literal text.
+            result.push_str(&template[literal_start..i]);
             // Check for escaped brace `{{`
-            if i + 1 < chars.len() && chars[i + 1] == '{' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                 result.push('{');
                 i += 2;
+                literal_start = i;
                 continue;
             }
             // Find the closing brace
-            let start = i + 1;
-            let mut end = start;
-            while end < chars.len() && chars[end] != '}' {
-                end += 1;
-            }
-            if end >= chars.len() {
-                return Err(format!(
-                    "Unclosed placeholder '{{' at position {}",
-                    i
-                ));
-            }
-            let name: String = chars[start..end].iter().collect();
+            let name_start = i + 1;
+            let end = bytes[name_start..]
+                .iter()
+                .position(|&b| b == b'}')
+                .map(|pos| name_start + pos)
+                .ok_or_else(|| {
+                    format!("Unclosed placeholder '{{' at position {}", i)
+                })?;
+            let name = &template[name_start..end];
             if name.is_empty() {
                 return Err("Empty placeholder name '{}' in template".to_string());
             }
-            let pattern = components.get(&name).ok_or_else(|| {
+            let pattern = components.get(name).ok_or_else(|| {
                 format!(
                     "No component provided for placeholder '{{{}}}'",
                     name
                 )
             })?;
             // Wrap in non-capture group to isolate from surrounding syntax
-            result.push_str(&format!("(?:{})", pattern));
+            result.push_str("(?:");
+            result.push_str(pattern);
+            result.push(')');
             i = end + 1;
-        } else if chars[i] == '}' {
+            literal_start = i;
+        } else if bytes[i] == b'}' {
+            // Flush preceding literal text.
+            result.push_str(&template[literal_start..i]);
             // Check for escaped brace `}}`
-            if i + 1 < chars.len() && chars[i + 1] == '}' {
+            if i + 1 < bytes.len() && bytes[i + 1] == b'}' {
                 result.push('}');
                 i += 2;
+                literal_start = i;
                 continue;
             }
             return Err(format!(
@@ -406,10 +416,11 @@ pub fn build_regex_pattern(
                 i
             ));
         } else {
-            result.push(chars[i]);
             i += 1;
         }
     }
+    // Flush remaining literal text.
+    result.push_str(&template[literal_start..]);
 
     // Validate the composed pattern with resharp
     resharp::Regex::new(&result)

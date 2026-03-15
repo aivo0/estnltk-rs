@@ -27,8 +27,10 @@ enum ColumnType {
     Regex,
 }
 
-impl ColumnType {
-    fn from_str(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for ColumnType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "string" => Ok(ColumnType::Str),
             "int" => Ok(ColumnType::Int),
@@ -41,6 +43,9 @@ impl ColumnType {
             )),
         }
     }
+}
+
+impl ColumnType {
 
     fn convert(&self, value: &str, line: usize, col: &str) -> Result<AnnotationValue, String> {
         match self {
@@ -189,7 +194,7 @@ pub fn load_rules_from_csv<P: AsRef<Path>>(
     // Parse column types
     let mut converters = Vec::with_capacity(n);
     for (i, ts) in type_strings.iter().enumerate() {
-        let ct = ColumnType::from_str(ts).map_err(|e| {
+        let ct = ts.parse::<ColumnType>().map_err(|e| {
             format!(
                 "Invalid file format: Line 2: column '{}': {}",
                 column_names[i], e

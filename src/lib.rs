@@ -97,7 +97,7 @@ impl PyRegexTagger {
             rules.push(parse_pattern_dict(dict)?);
         }
 
-        let strategy = ConflictStrategy::from_str(conflict_resolver)
+        let strategy = conflict_resolver.parse::<ConflictStrategy>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
         let config = TaggerConfig {
@@ -165,10 +165,10 @@ impl PyRegexTagger {
 
     /// Return raw match spans as list of (start, end, rule_index) tuples.
     fn extract_matches(&self, py: Python<'_>, text: &str) -> PyResult<PyObject> {
-        let raw_text = if self.inner.config.lowercase_text {
-            text.to_lowercase()
+        let raw_text: std::borrow::Cow<str> = if self.inner.config.lowercase_text {
+            std::borrow::Cow::Owned(text.to_lowercase())
         } else {
-            text.to_string()
+            std::borrow::Cow::Borrowed(text)
         };
         let b2c = byte_char::byte_to_char_map(&raw_text);
         let text_bytes = raw_text.as_bytes();
@@ -225,7 +225,7 @@ fn rs_regex_tag(
         rules.push(rule);
     }
 
-    let strategy = ConflictStrategy::from_str(conflict_resolver)
+    let strategy = conflict_resolver.parse::<ConflictStrategy>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
     let config = TaggerConfig {
@@ -331,7 +331,7 @@ impl PySubstringTagger {
             rules
         };
 
-        let strategy = ConflictStrategy::from_str(conflict_resolver)
+        let strategy = conflict_resolver.parse::<ConflictStrategy>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
         let config = TaggerConfig {
@@ -458,7 +458,7 @@ fn rs_substring_tag(
         rules
     };
 
-    let strategy = ConflictStrategy::from_str(conflict_resolver)
+    let strategy = conflict_resolver.parse::<ConflictStrategy>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
     let config = TaggerConfig {
@@ -535,7 +535,7 @@ impl PySpanTagger {
             rules.push(parse_span_pattern_dict(dict)?);
         }
 
-        let strategy = ConflictStrategy::from_str(conflict_resolver)
+        let strategy = conflict_resolver.parse::<ConflictStrategy>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
         let config = SpanTaggerConfig {
@@ -699,7 +699,7 @@ fn rs_span_tag(
         rules.push(rule);
     }
 
-    let strategy = ConflictStrategy::from_str(conflict_resolver)
+    let strategy = conflict_resolver.parse::<ConflictStrategy>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
     let config = SpanTaggerConfig {
@@ -815,7 +815,7 @@ impl PyPhraseTagger {
             rules.push(parse_phrase_pattern_dict(dict)?);
         }
 
-        let strategy = ConflictStrategy::from_str(conflict_resolver)
+        let strategy = conflict_resolver.parse::<ConflictStrategy>()
             .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
         let config = PhraseTaggerConfig {
@@ -917,7 +917,7 @@ fn rs_phrase_tag(
         rules.push(rule);
     }
 
-    let strategy = ConflictStrategy::from_str(conflict_resolver)
+    let strategy = conflict_resolver.parse::<ConflictStrategy>()
         .map_err(|e| pyo3::exceptions::PyValueError::new_err(e))?;
 
     let config = PhraseTaggerConfig {

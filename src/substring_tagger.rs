@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use aho_corasick::AhoCorasick;
@@ -119,10 +120,10 @@ impl SubstringTagger {
 
     /// Run the full tagging pipeline on a text string.
     pub fn tag(&self, text: &str) -> TagResult {
-        let raw_text = if self.config.lowercase_text {
-            text.to_lowercase()
+        let raw_text: Cow<str> = if self.config.lowercase_text {
+            Cow::Owned(text.to_lowercase())
         } else {
-            text.to_string()
+            Cow::Borrowed(text)
         };
 
         // Step 1: Extract unique matches (one per AC match, indexed by pattern_id).

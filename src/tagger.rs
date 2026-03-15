@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use crate::byte_char::byte_to_char_map;
@@ -29,10 +30,10 @@ impl RegexTagger {
 
     /// Run the full tagging pipeline on a text string.
     pub fn tag(&self, text: &str) -> TagResult {
-        let raw_text = if self.config.lowercase_text {
-            text.to_lowercase()
+        let raw_text: Cow<str> = if self.config.lowercase_text {
+            Cow::Owned(text.to_lowercase())
         } else {
-            text.to_string()
+            Cow::Borrowed(text)
         };
 
         // Step 1: Extract all matches with byte→char conversion.
@@ -205,6 +206,14 @@ impl RegexTagger {
     /// `text` is the (possibly lowercased) text that was matched against,
     /// used to extract matched substrings when `match_attribute` is set.
     fn build_result(&self, resolved: &[MatchEntry], text: &str) -> TagResult {
+        // Build char→byte map only when match_attribute is set (O(n) once,
+        // then O(1) per match instead of O(start+len) per match).
+        let c2b = self
+            .config
+            .match_attribute
+            .as_ref()
+            .map(|_| crate::byte_char::char_to_byte_map(text));
+
         let entries = resolved.iter().map(|&(match_span, rule_idx)| {
             let mut annotation = build_rule_annotation(
                 &self.rules[rule_idx],
@@ -214,14 +223,12 @@ impl RegexTagger {
                 self.config.pattern_attribute.as_deref(),
             );
             if let Some(ref attr_name) = self.config.match_attribute {
-                let matched_text: String = text
-                    .chars()
-                    .skip(match_span.start)
-                    .take(match_span.end - match_span.start)
-                    .collect();
-                annotation
-                    .0
-                    .insert(attr_name.clone(), AnnotationValue::Str(matched_text));
+                let c2b = c2b.as_ref().unwrap();
+                let matched_text = &text[c2b[match_span.start]..c2b[match_span.end]];
+                annotation.0.insert(
+                    attr_name.clone(),
+                    AnnotationValue::Str(matched_text.to_string()),
+                );
             }
             (match_span, annotation)
         });

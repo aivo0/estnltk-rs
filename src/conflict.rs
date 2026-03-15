@@ -69,16 +69,17 @@ pub fn keep_minimal_matches(sorted: &[MatchEntry]) -> Vec<MatchEntry> {
 
     let mut result = Vec::new();
     let mut work_list: Vec<MatchEntry> = Vec::new();
+    let mut next_work_list: Vec<MatchEntry> = Vec::new();
 
     for &current in sorted {
-        let mut new_work_list = Vec::new();
+        next_work_list.clear();
         let mut add_current = true;
 
         for &candidate in &work_list {
             // Candidate has same start as current → candidate is shorter or equal,
             // so candidate is inside current. Keep candidate, skip current.
             if current.0.start == candidate.0.start {
-                new_work_list.push(candidate);
+                next_work_list.push(candidate);
                 add_current = false;
                 break;
             }
@@ -92,15 +93,15 @@ pub fn keep_minimal_matches(sorted: &[MatchEntry]) -> Vec<MatchEntry> {
             // Current is NOT inside the candidate (candidate ends before current ends).
             // Keep candidate in worklist.
             if candidate.0.end < current.0.end {
-                new_work_list.push(candidate);
+                next_work_list.push(candidate);
             }
             // else: candidate.0.end >= current.0.end → current IS inside candidate → drop candidate
         }
 
         if add_current {
-            new_work_list.push(current);
+            next_work_list.push(current);
         }
-        work_list = new_work_list;
+        std::mem::swap(&mut work_list, &mut next_work_list);
     }
 
     // Flush remaining worklist.

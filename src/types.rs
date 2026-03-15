@@ -216,8 +216,10 @@ pub enum ConflictStrategy {
     KeepMinimalExceptPriority,
 }
 
-impl ConflictStrategy {
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl std::str::FromStr for ConflictStrategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "KEEP_ALL" => Ok(ConflictStrategy::KeepAll),
             "KEEP_MAXIMAL" => Ok(ConflictStrategy::KeepMaximal),
@@ -292,13 +294,14 @@ pub fn check_unique_patterns(patterns: &[&str], lowercase: bool) -> Result<(), S
         } else {
             pat.to_string()
         };
-        if !seen.insert(key.clone()) {
+        if seen.contains(&key) {
             return Err(format!(
                 "Duplicate pattern '{}' not allowed when unique_patterns=true. \
                  Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
                 key
             ));
         }
+        seen.insert(key);
     }
     Ok(())
 }
@@ -425,13 +428,14 @@ pub fn check_unique_phrase_patterns(patterns: &[&[String]], lowercase: bool) -> 
         } else {
             pat.to_vec()
         };
-        if !seen.insert(key.clone()) {
+        if seen.contains(&key) {
             return Err(format!(
                 "Duplicate phrase pattern '{:?}' not allowed when unique_patterns=true. \
                  Use unique_patterns=false (AmbiguousRuleset) to allow multiple rules per pattern.",
                 key
             ));
         }
+        seen.insert(key);
     }
     Ok(())
 }
