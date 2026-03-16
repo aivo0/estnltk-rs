@@ -61,6 +61,7 @@ impl SegmentationPipeline {
     }
 
     /// Run the full segmentation pipeline on the given text.
+    #[must_use]
     pub fn segment(&self, text: &str) -> SegmentationResult {
         // 1. Tokenize
         let tokens = self.token_tagger.tokenize(text);
@@ -88,16 +89,29 @@ impl SegmentationPipeline {
 }
 
 /// Convenience function: tokenize text into character-level spans.
+///
+/// Note: compiles regex patterns on every call. For repeated use,
+/// create a [`SegmentationPipeline`] or [`TokensTagger`](tokens_tagger::TokensTagger) instead.
+#[must_use]
 pub fn tokenize(text: &str) -> Vec<MatchSpan> {
     TokensTagger::new().tokenize(text)
 }
 
 /// Convenience function: detect compound tokens.
+///
+/// Note: compiles 40+ regex patterns on every call. For repeated use,
+/// create a [`SegmentationPipeline`] or [`CompoundTokenTagger`](compound_token::CompoundTokenTagger) instead.
+#[must_use]
 pub fn detect_compound_tokens(text: &str, tokens: &[MatchSpan]) -> Vec<CompoundToken> {
     CompoundTokenTagger::estonian().detect(text, tokens)
 }
 
 /// Convenience function: split text into sentences.
+///
+/// Note: compiles 30+ merge patterns and loads Punkt parameters on every call.
+/// For repeated use, create a [`SegmentationPipeline`] or
+/// [`SentenceTokenizer`](sentence::SentenceTokenizer) instead.
+#[must_use]
 pub fn split_sentences(
     text: &str,
     words: &[Word],

@@ -18,6 +18,7 @@ pub struct Paragraph {
 /// Detect paragraphs by grouping sentences at `\n\n` boundaries.
 ///
 /// Port of Python's ParagraphTokenizer.
+#[must_use]
 pub fn detect_paragraphs(
     text: &str,
     sentences: &[Sentence],

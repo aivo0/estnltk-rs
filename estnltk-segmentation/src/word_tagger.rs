@@ -15,6 +15,7 @@ pub struct Word {
 ///
 /// Compound tokens override individual tokens: all token spans that fall within
 /// a compound token are replaced by the compound token's bounding span.
+#[must_use]
 pub fn assemble_words(
     tokens: &[MatchSpan],
     compound_tokens: &[CompoundToken],

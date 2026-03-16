@@ -94,7 +94,7 @@ impl CompoundTokenTagger {
         // Filter patterns based on config
         let level1_patterns: Vec<CompoundTokenPattern> = all_level1
             .into_iter()
-            .filter(|p| is_pattern_allowed(&p.pattern_type, &config))
+            .filter(|p| !p.is_negative && is_pattern_allowed(&p.pattern_type, &config))
             .collect();
 
         let level2_patterns: Vec<CompoundTokenPattern> = all_level2
@@ -185,7 +185,8 @@ impl CompoundTokenTagger {
         let mut hints: Vec<(MatchSpan, String, Option<String>, i64)> = Vec::new();
 
         for pattern in &self.level1_patterns {
-            for m in pattern.regex.find_iter(text) {
+            for caps in pattern.regex.captures_iter(text) {
+                let m = caps.get(0).unwrap();
                 let byte_start = m.start();
                 let byte_end = m.end();
                 let char_start = b2c[byte_start];
@@ -199,27 +200,13 @@ impl CompoundTokenTagger {
                     continue;
                 }
 
-                // Skip negative patterns
-                if pattern.is_negative {
-                    continue;
-                }
-
-                // Apply group extraction using captures if group != 0
+                // Extract group span from captures directly (no re-running regex)
                 let (group_start, group_end) = if pattern.group == 0 {
                     (char_start, char_end)
+                } else if let Some(grp) = caps.get(pattern.group) {
+                    (b2c[grp.start()], b2c[grp.end()])
                 } else {
-                    // Re-run with captures to get the specific group
-                    if let Some(caps) = pattern.regex.captures(&text[byte_start..]) {
-                        if let Some(grp) = caps.get(pattern.group) {
-                            let gs = b2c[byte_start + grp.start()];
-                            let ge = b2c[byte_start + grp.end()];
-                            (gs, ge)
-                        } else {
-                            continue;
-                        }
-                    } else {
-                        continue;
-                    }
+                    continue;
                 };
 
                 let normalized = self.apply_normalization(&pattern.normalization, text, byte_start, byte_end, &pattern.regex);
@@ -258,10 +245,12 @@ impl CompoundTokenTagger {
             if !kept.contains(&i) {
                 continue;
             }
-            // Find tokens covered by this hint span
-            let covered: Vec<MatchSpan> = tokens
+            // Find tokens covered by this hint span (binary search + scan)
+            let start_idx = tokens.partition_point(|t| t.start < span.start);
+            let covered: Vec<MatchSpan> = tokens[start_idx..]
                 .iter()
-                .filter(|t| t.start >= span.start && t.end <= span.end)
+                .take_while(|t| t.start < span.end)
+                .filter(|t| t.end <= span.end)
                 .copied()
                 .collect();
             if covered.is_empty() {
@@ -272,9 +261,9 @@ impl CompoundTokenTagger {
             let first_token_start = covered.first().map(|t| t.start).unwrap_or(0);
             if last_token_end != span.end {
                 // Try to find the matching end token
-                let adjusted_covered: Vec<MatchSpan> = tokens
+                let adjusted_covered: Vec<MatchSpan> = tokens[start_idx..]
                     .iter()
-                    .filter(|t| t.start >= span.start && t.start < span.end)
+                    .take_while(|t| t.start < span.end)
                     .copied()
                     .collect();
                 if adjusted_covered.len() >= 2 {
@@ -388,19 +377,16 @@ impl CompoundTokenTagger {
             let left_strict = pattern.left_strict.unwrap_or(true);
             let right_strict = pattern.right_strict.unwrap_or(true);
 
-            for m in pattern.regex.find_iter(text) {
+            for caps in pattern.regex.captures_iter(text) {
+                let m = caps.get(0).unwrap();
                 let byte_start = m.start();
                 let byte_end = m.end();
 
-                // Get group span
+                // Extract group span from captures directly (no re-running regex)
                 let (group_byte_start, group_byte_end) = if pattern.group == 0 {
                     (byte_start, byte_end)
-                } else if let Some(caps) = pattern.regex.captures(&text[byte_start..]) {
-                    if let Some(grp) = caps.get(pattern.group) {
-                        (byte_start + grp.start(), byte_start + grp.end())
-                    } else {
-                        continue;
-                    }
+                } else if let Some(grp) = caps.get(pattern.group) {
+                    (grp.start(), grp.end())
                 } else {
                     continue;
                 };
