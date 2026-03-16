@@ -294,6 +294,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "estnltk-segmentation"
+version = "0.1.0"
+dependencies = [
+ "estnltk-core",
+ "regex",
+ "thiserror",
+]
+
+[[package]]
 name = "estnltk-taggers"
 version = "0.1.0"
 dependencies = [

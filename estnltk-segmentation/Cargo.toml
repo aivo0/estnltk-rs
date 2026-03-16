@@ -1,0 +1,12 @@
+[package]
+name = "estnltk-segmentation"
+version = "0.1.0"
+edition = "2021"
+description = "Estonian text segmentation pipeline: tokens, compound tokens, words, sentences, paragraphs"
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core" }
+regex = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]

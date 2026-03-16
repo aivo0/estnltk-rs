@@ -9,6 +9,7 @@ members = [
     "estnltk-python",
     "vabamorf-sys",
     "vabamorf-rs",
+    "estnltk-segmentation",
 ]
 resolver = "2"
 
