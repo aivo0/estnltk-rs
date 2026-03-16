@@ -70,13 +70,6 @@ pub enum DepthLimit {
 }
 
 impl DepthLimit {
-    pub fn value(&self) -> f64 {
-        match self {
-            DepthLimit::Finite(n) => *n as f64,
-            DepthLimit::Unlimited => f64::INFINITY,
-        }
-    }
-
     pub fn is_unlimited(&self) -> bool {
         matches!(self, DepthLimit::Unlimited)
     }
@@ -90,13 +83,6 @@ pub enum WidthLimit {
 }
 
 impl WidthLimit {
-    pub fn value(&self) -> f64 {
-        match self {
-            WidthLimit::Finite(n) => *n as f64,
-            WidthLimit::Unlimited => f64::INFINITY,
-        }
-    }
-
     pub fn exceeds(&self, count: usize) -> bool {
         match self {
             WidthLimit::Finite(n) => count > *n as usize,
@@ -394,6 +380,8 @@ pub struct Grammar {
     mseq_rule_map: HashMap<String, Vec<(usize, usize)>>,
     /// SEQ symbol pairs: (SEQ(X), X).
     plus_symbols: Vec<(String, String)>,
+    /// MSEQ symbol pairs: (MSEQ(X), X).
+    mseq_symbols: Vec<(String, String)>,
 }
 
 impl std::fmt::Debug for Grammar {
@@ -508,12 +496,12 @@ impl Grammar {
         let mut terminals: HashSet<String> = HashSet::new();
         for rule in &rules {
             for sym in &rule.rhs {
-                if let Some(_inner) = match_seq_pattern(sym) {
+                if let Some(inner) = match_seq_pattern(sym) {
                     nonterminals.insert(sym.clone());
-                    terminals.insert(_inner.to_string());
-                } else if let Some(_inner) = match_mseq_pattern(sym) {
+                    terminals.insert(inner.to_string());
+                } else if let Some(inner) = match_mseq_pattern(sym) {
                     nonterminals.insert(sym.clone());
-                    terminals.insert(_inner.to_string());
+                    terminals.insert(inner.to_string());
                 } else {
                     terminals.insert(sym.clone());
                 }
@@ -523,6 +511,7 @@ impl Grammar {
         terminals.retain(|s| !nonterminals.contains(s));
 
         let plus_symbols: Vec<(String, String)> = plus_symbols.into_iter().collect();
+        let mseq_symbols: Vec<(String, String)> = mseq_symbols.into_iter().collect();
 
         let grammar = Grammar {
             rules,
@@ -538,6 +527,7 @@ impl Grammar {
             mseq_rules,
             mseq_rule_map,
             plus_symbols,
+            mseq_symbols,
         };
 
         // Check for infinite grammar
@@ -613,6 +603,9 @@ impl Grammar {
         for (ps, s) in &self.plus_symbols {
             adj.entry(ps).or_default().insert(s);
         }
+        for (ps, s) in &self.mseq_symbols {
+            adj.entry(ps).or_default().insert(s);
+        }
 
         // DFS cycle detection: 0=white, 1=gray, 2=black
         let all_nodes: HashSet<&str> = adj
@@ -653,14 +646,6 @@ impl Grammar {
             }
         }
         true
-    }
-
-    /// Get rules for a nonterminal by name.
-    pub fn rules_for(&self, nonterminal: &str) -> Vec<&Rule> {
-        self.rules
-            .iter()
-            .filter(|r| r.lhs == nonterminal)
-            .collect()
     }
 }
 

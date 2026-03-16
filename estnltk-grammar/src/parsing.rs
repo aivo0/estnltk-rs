@@ -117,10 +117,11 @@ fn support_refs<'a>(support: &[NodeId], graph: &'a ParseGraph) -> Vec<&'a Gramma
     support.iter().map(|&id| graph.node(id)).collect()
 }
 
-/// Build a NonTerminalNode from a regular rule and support.
+/// Build a NonTerminalNode from a regular rule, support, and pre-computed refs.
 fn make_nonterminal(
     rule: &Rule,
     support: &[NodeId],
+    refs: &[&GrammarNode],
     graph: &ParseGraph,
 ) -> GrammarNode {
     let terminals: Vec<NodeId> = support
@@ -130,9 +131,7 @@ fn make_nonterminal(
 
     let start = graph.node(*terminals.first().unwrap()).start;
     let end = graph.node(*terminals.last().unwrap()).end;
-
-    let refs = support_refs(support, graph);
-    let score = rule.score(&refs);
+    let score = rule.score(refs);
 
     GrammarNode {
         id: 0,
@@ -156,13 +155,13 @@ fn make_seq_variant_node(
     rule: &SyntheticRule,
     support: &[NodeId],
     graph: &ParseGraph,
-    flatten_kind: &NodeKind,
+    flatten_kind: NodeKind,
     output_kind: NodeKind,
 ) -> GrammarNode {
     let mut flat_support = Vec::new();
     for &id in support {
         let node = graph.node(id);
-        if &node.kind == flatten_kind {
+        if node.kind == flatten_kind {
             flat_support.extend_from_slice(&node.support);
         } else {
             flat_support.push(id);
@@ -285,7 +284,7 @@ fn try_add_node(
 
     let node_support_first = node.support.first().copied();
     let node_support_last = node.support.last().copied();
-    let id = graph.add_node(node)?;
+    let id = graph.add_node_with_key(node, key)?;
 
     if let Some(first_supp) = node_support_first {
         let preds: Vec<NodeId> = graph.seq_pred(first_supp).collect();
@@ -354,7 +353,7 @@ fn expand_regular(
                 continue;
             }
 
-            let mut new_node = make_nonterminal(rule, &support, graph);
+            let mut new_node = make_nonterminal(rule, &support, &refs, graph);
 
             if width_limit.exceeds(new_node.terminals.len()) {
                 continue;
@@ -388,7 +387,7 @@ fn expand_synthetic(
     rules: &[SyntheticRule],
     rule_map: &std::collections::HashMap<String, Vec<(usize, usize)>>,
     width_limit: WidthLimit,
-    flatten_kind: &NodeKind,
+    flatten_kind: NodeKind,
     output_kind: NodeKind,
 ) -> Vec<GrammarNode> {
     let entries = match rule_map.get(node_name) {
@@ -401,7 +400,7 @@ fn expand_synthetic(
         let rule = &rules[rule_idx];
         for support in get_match(graph, node_id, &rule.rhs, pos) {
             let new_node =
-                make_seq_variant_node(rule, &support, graph, flatten_kind, output_kind.clone());
+                make_seq_variant_node(rule, &support, graph, flatten_kind, output_kind);
             if !width_limit.exceeds(new_node.terminals.len()) {
                 candidates.push(new_node);
             }
@@ -472,12 +471,12 @@ pub fn parse_graph(
         let candidates_hidden = expand_synthetic(
             node_id, graph, &node_name,
             grammar.hidden_rules(), grammar.hidden_rule_map(),
-            width_limit, &NodeKind::Plus, NodeKind::Plus,
+            width_limit, NodeKind::Plus, NodeKind::Plus,
         );
         let candidates_mseq = expand_synthetic(
             node_id, graph, &node_name,
             grammar.mseq_rules(), grammar.mseq_rule_map(),
-            width_limit, &NodeKind::MSeq, NodeKind::MSeq,
+            width_limit, NodeKind::MSeq, NodeKind::MSeq,
         );
 
         let all_candidates = candidates_regular

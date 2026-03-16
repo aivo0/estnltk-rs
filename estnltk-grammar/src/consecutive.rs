@@ -23,9 +23,10 @@ pub fn iterate_consecutive_spans(
     let mut result = Vec::new();
 
     // Assume spans are already sorted by (start, end)
+    let mut checked: Vec<&MatchSpan> = Vec::new();
     for i in 0..spans.len() {
         let span_i = &spans[i].span;
-        let mut checked: Vec<&MatchSpan> = Vec::new();
+        checked.clear();
 
         for j in (i + 1)..spans.len() {
             let span_j = &spans[j].span;

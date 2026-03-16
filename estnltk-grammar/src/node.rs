@@ -14,7 +14,7 @@ pub fn compute_group_hash(name: &str, items: &impl Hash) -> i64 {
 }
 
 /// Discriminates node kinds in the parse graph.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
     /// A leaf node representing an input-layer span.
     Terminal {

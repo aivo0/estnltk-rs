@@ -92,8 +92,13 @@ impl ParseGraph {
     ///
     /// If a node with the same identity already exists, this is a no-op
     /// and returns `None`.
-    pub fn add_node(&mut self, mut node: GrammarNode) -> Option<NodeId> {
+    pub fn add_node(&mut self, node: GrammarNode) -> Option<NodeId> {
         let key = node.identity_key();
+        self.add_node_with_key(node, key)
+    }
+
+    /// Add a node with a pre-computed identity key, avoiding redundant allocation.
+    pub fn add_node_with_key(&mut self, mut node: GrammarNode, key: NodeKey) -> Option<NodeId> {
         if self.identity_set.contains(&key) {
             return None;
         }
@@ -284,12 +289,7 @@ mod tests {
         end: usize,
         terminals: Vec<NodeId>,
     ) -> GrammarNode {
-        let group = {
-            use std::hash::{Hash, Hasher};
-            let mut h = std::collections::hash_map::DefaultHasher::new();
-            (name, &support).hash(&mut h);
-            h.finish() as i64
-        };
+        let group = crate::node::compute_group_hash(name, &support);
         GrammarNode {
             id: 0,
             name: name.to_string(),
