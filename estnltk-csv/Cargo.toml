@@ -1,0 +1,13 @@
+[package]
+name = "estnltk-csv"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core" }
+csv.workspace = true
+resharp.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+estnltk-taggers = { path = "../estnltk-taggers" }

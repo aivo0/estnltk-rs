@@ -1,0 +1,9 @@
+[package]
+name = "estnltk-morph"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core" }
+estnltk-taggers = { path = "../estnltk-taggers" }
+vabamorf-rs = { path = "../vabamorf-rs" }

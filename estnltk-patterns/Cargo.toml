@@ -1,0 +1,9 @@
+[package]
+name = "estnltk-patterns"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core" }
+resharp.workspace = true
+regex.workspace = true

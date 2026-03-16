@@ -1,0 +1,12 @@
+[package]
+name = "estnltk-core"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+pyo3 = ["dep:pyo3"]
+
+[dependencies]
+thiserror.workspace = true
+serde.workspace = true
+pyo3 = { workspace = true, optional = true }

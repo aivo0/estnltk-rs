@@ -1,0 +1,27 @@
+[package]
+name = "estnltk-python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "estnltk_regex_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core", features = ["pyo3"] }
+estnltk-patterns = { path = "../estnltk-patterns" }
+estnltk-csv = { path = "../estnltk-csv" }
+estnltk-taggers = { path = "../estnltk-taggers" }
+pyo3.workspace = true
+
+[dependencies.estnltk-morph]
+path = "../estnltk-morph"
+optional = true
+
+[dependencies.vabamorf-rs]
+path = "../vabamorf-rs"
+optional = true
+
+[features]
+default = ["vabamorf"]
+vabamorf = ["dep:estnltk-morph", "dep:vabamorf-rs"]

@@ -8,4 +8,5 @@ version = "0.1.0"
 requires-python = ">=3.8"
 
 [tool.maturin]
+manifest-path = "estnltk-python/Cargo.toml"
 features = ["pyo3/extension-module", "vabamorf"]

@@ -232,20 +232,66 @@ dependencies = [
 ]
 
 [[package]]
-name = "estnltk-regex-rs"
+name = "estnltk-core"
+version = "0.1.0"
+dependencies = [
+ "pyo3",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "estnltk-csv"
+version = "0.1.0"
+dependencies = [
+ "csv",
+ "estnltk-core",
+ "estnltk-taggers",
+ "resharp",
+ "tempfile",
+]
+
+[[package]]
+name = "estnltk-morph"
+version = "0.1.0"
+dependencies = [
+ "estnltk-core",
+ "estnltk-taggers",
+ "vabamorf-rs",
+]
+
+[[package]]
+name = "estnltk-patterns"
+version = "0.1.0"
+dependencies = [
+ "estnltk-core",
+ "regex",
+ "resharp",
+]
+
+[[package]]
+name = "estnltk-python"
+version = "0.1.0"
+dependencies = [
+ "estnltk-core",
+ "estnltk-csv",
+ "estnltk-morph",
+ "estnltk-patterns",
+ "estnltk-taggers",
+ "pyo3",
+ "vabamorf-rs",
+]
+
+[[package]]
+name = "estnltk-taggers"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
  "criterion",
- "csv",
- "pyo3",
+ "estnltk-core",
  "regex",
  "resharp",
- "serde",
  "serde_json",
- "tempfile",
- "thiserror",
- "vabamorf-rs",
 ]
 
 [[package]]

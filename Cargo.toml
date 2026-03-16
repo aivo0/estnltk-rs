@@ -1,32 +1,23 @@
-[package]
-name = "estnltk-regex-rs"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "estnltk-core",
+    "estnltk-patterns",
+    "estnltk-csv",
+    "estnltk-taggers",
+    "estnltk-morph",
+    "estnltk-python",
+    "vabamorf-sys",
+    "vabamorf-rs",
+]
+resolver = "2"
 
-[lib]
-name = "estnltk_regex_rs"
-crate-type = ["cdylib", "rlib"]
-
-[features]
-default = ["vabamorf"]
-vabamorf = ["dep:vabamorf-rs"]
-
-[dependencies]
-aho-corasick = "1"
-csv = "1"
-regex = "1"
-resharp = "0.3"
-pyo3 = { version = "0.22", features = ["extension-module"] }
+[workspace.dependencies]
+thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-thiserror = "2"
-vabamorf-rs = { path = "vabamorf-rs", optional = true }
-
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-serde_json = "1"
+resharp = "0.3"
+regex = "1"
+aho-corasick = "1"
+csv = "1"
+pyo3 = { version = "0.22", features = ["extension-module"] }
 tempfile = "3"
-
-[[bench]]
-name = "tagger_benchmarks"
-harness = false
