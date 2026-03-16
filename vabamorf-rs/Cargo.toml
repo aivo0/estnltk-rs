@@ -7,3 +7,10 @@ license = "GPL-2.0 OR Apache-2.0"
 
 [dependencies]
 vabamorf-sys = { path = "../vabamorf-sys" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "vabamorf_benchmarks"
+harness = false

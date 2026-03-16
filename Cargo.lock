@@ -255,6 +255,7 @@ dependencies = [
 name = "estnltk-morph"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "estnltk-core",
  "estnltk-taggers",
  "vabamorf-rs",
@@ -872,6 +873,7 @@ checksum = "7264e107f553ccae879d21fbea1d6724ac785e8c3bfc762137959b5802826ef3"
 name = "vabamorf-rs"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "vabamorf-sys",
 ]
 

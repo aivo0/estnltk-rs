@@ -1,4 +1,4 @@
-//! Criterion benchmarks for RegexTagger and SubstringTagger.
+//! Criterion benchmarks for RegexTagger, SubstringTagger, SpanTagger, and PhraseTagger.
 //!
 //! Measures throughput across varying text sizes, pattern counts,
 //! and conflict resolution strategies.
@@ -8,9 +8,13 @@ use std::collections::HashMap;
 
 use estnltk_core::{
     conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches,
-    CommonConfig, ConflictStrategy, MatchSpan, TaggerConfig,
+    Annotation, AnnotationValue, CommonConfig, ConflictStrategy, MatchSpan,
+    TaggedSpan, TagResult, TaggerConfig,
 };
-use estnltk_taggers::{make_rule, RegexTagger, SubstringRule, SubstringTagger};
+use estnltk_taggers::{
+    make_rule, make_phrase_rule, PhraseTagger, PhraseTaggerConfig, PhraseRule,
+    RegexTagger, SpanRule, SpanTagger, SpanTaggerConfig, SubstringRule, SubstringTagger,
+};
 
 /// Representative Estonian text paragraph for benchmarks.
 const ESTONIAN_BASE: &str = "\
@@ -41,13 +45,8 @@ fn default_config(strategy: ConflictStrategy) -> TaggerConfig {
     TaggerConfig {
         common: CommonConfig {
             output_layer: "bench".to_string(),
-            output_attributes: vec![],
             conflict_strategy: strategy,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         lowercase_text: false,
         overlapped: false,
@@ -346,6 +345,300 @@ fn bench_lowercase_overhead(c: &mut Criterion) {
     group.finish();
 }
 
+// --- SpanTagger benchmarks ---
+
+/// Estonian lemmas for SpanTagger rules — maps lemma patterns to labels.
+const SPAN_LEMMAS: &[(&str, &str)] = &[
+    ("eesti", "LOC"), ("riik", "CONCEPT"), ("linn", "LOC"), ("keel", "LANG"),
+    ("mets", "NATURE"), ("saar", "NATURE"), ("järv", "NATURE"), ("raba", "NATURE"),
+    ("tallinn", "LOC"), ("saaremaa", "LOC"), ("hiiumaa", "LOC"), ("euroopa", "LOC"),
+    ("kultuur", "CONCEPT"), ("muusika", "ART"), ("kunst", "ART"), ("kirjandus", "ART"),
+    ("traditsioon", "CONCEPT"), ("laulupidu", "EVENT"), ("organisatsioon", "ORG"),
+    ("majandus", "CONCEPT"), ("digitaalne", "TECH"), ("loodus", "NATURE"),
+    ("pealinn", "LOC"), ("vabariik", "POLITY"), ("demokraatlik", "POLITY"),
+    ("maailm", "LOC"), ("nato", "ORG"), ("oecd", "ORG"), ("liit", "ORG"),
+    ("rahvaarv", "CONCEPT"),
+];
+
+/// Build a synthetic TagResult simulating morphological analysis output.
+/// Each "word" gets a span and an annotation with a `lemma` attribute.
+fn build_span_tagger_input(n_spans: usize) -> TagResult {
+    let lemmas: Vec<&str> = SPAN_LEMMAS.iter().map(|(l, _)| *l).collect();
+    let mut spans = Vec::with_capacity(n_spans);
+    let mut offset = 0;
+    for i in 0..n_spans {
+        let lemma = lemmas[i % lemmas.len()];
+        let end = offset + lemma.len();
+        spans.push(TaggedSpan {
+            span: MatchSpan::new(offset, end),
+            annotations: vec![Annotation::from(HashMap::from([(
+                "lemma".to_string(),
+                AnnotationValue::Str(lemma.to_string()),
+            )]))],
+        });
+        offset = end + 1; // +1 for space
+    }
+    TagResult {
+        name: "morph_analysis".to_string(),
+        attributes: vec!["lemma".to_string()],
+        ambiguous: true,
+        spans,
+    }
+}
+
+fn build_span_tagger(n_rules: usize) -> SpanTagger {
+    let rules: Vec<SpanRule> = SPAN_LEMMAS[..n_rules]
+        .iter()
+        .map(|(pattern, label)| {
+            SpanRule::new(
+                pattern,
+                HashMap::from([("type".to_string(), AnnotationValue::Str(label.to_string()))]),
+                0,
+                0,
+            )
+        })
+        .collect();
+    let config = SpanTaggerConfig {
+        common: CommonConfig {
+            output_layer: "tagged".to_string(),
+            output_attributes: vec!["type".to_string()],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            ..CommonConfig::default()
+        },
+        input_attribute: "lemma".to_string(),
+        ignore_case: false,
+    };
+    SpanTagger::new(rules, config).unwrap()
+}
+
+fn bench_span_tagger_input_size(c: &mut Criterion) {
+    let mut group = c.benchmark_group("span_tagger/input_size");
+    let tagger = build_span_tagger(10);
+
+    for &n_spans in &[100, 1_000, 10_000] {
+        let input = build_span_tagger_input(n_spans);
+        let label = format!("{}_spans", n_spans);
+
+        group.bench_with_input(BenchmarkId::new("tag", &label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_span_tagger_rule_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("span_tagger/rule_count");
+    let input = build_span_tagger_input(1_000);
+
+    for &n_rules in &[5, 10, 20, 30] {
+        let tagger = build_span_tagger(n_rules);
+        let label = format!("{}_rules", n_rules);
+
+        group.bench_with_input(BenchmarkId::new("tag", &label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_span_tagger_ignore_case(c: &mut Criterion) {
+    let mut group = c.benchmark_group("span_tagger/ignore_case");
+    let input = build_span_tagger_input(1_000);
+
+    for &ignore_case in &[false, true] {
+        let rules: Vec<SpanRule> = SPAN_LEMMAS[..10]
+            .iter()
+            .map(|(pattern, label)| {
+                SpanRule::new(
+                    pattern,
+                    HashMap::from([("type".to_string(), AnnotationValue::Str(label.to_string()))]),
+                    0,
+                    0,
+                )
+            })
+            .collect();
+        let config = SpanTaggerConfig {
+            common: CommonConfig {
+                output_layer: "tagged".to_string(),
+                output_attributes: vec!["type".to_string()],
+                conflict_strategy: ConflictStrategy::KeepAll,
+                ..CommonConfig::default()
+            },
+            input_attribute: "lemma".to_string(),
+            ignore_case,
+        };
+        let tagger = SpanTagger::new(rules, config).unwrap();
+        let label = if ignore_case { "ignore_case=true" } else { "ignore_case=false" };
+
+        group.bench_with_input(BenchmarkId::new("tag", label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
+// --- PhraseTagger benchmarks ---
+
+/// Estonian phrase patterns (tuples) for PhraseTagger rules.
+const PHRASE_PATTERNS: &[&[&str]] = &[
+    &["euroopa", "liit"],
+    &["eesti", "vabariik"],
+    &["euroopa", "nõukogu"],
+    &["soome", "ugri"],
+    &["eesti", "keel"],
+    &["eesti", "kultuur"],
+    &["eesti", "loodus"],
+    &["eesti", "majandus"],
+    &["new", "york", "city"],
+    &["põhja", "euroopa"],
+    &["lääne", "meri"],
+    &["rahvusvaheline", "organisatsioon"],
+    &["digitaalne", "allkirjastamine"],
+    &["eesti", "vabariik", "valitsus"],
+    &["soome", "ugri", "keelkond"],
+];
+
+/// Build a synthetic TagResult for PhraseTagger input.
+/// Creates `n_spans` spans cycling through Estonian lemmas that include phrase components.
+fn build_phrase_tagger_input(n_spans: usize) -> TagResult {
+    let words = [
+        "eesti", "vabariik", "on", "euroopa", "liit", "ja", "euroopa", "nõukogu",
+        "liige", "eesti", "keel", "kuulub", "soome", "ugri", "keelkonda",
+        "eesti", "kultuur", "on", "rikas", "digitaalne", "allkirjastamine",
+    ];
+    let mut spans = Vec::with_capacity(n_spans);
+    let mut offset = 0;
+    for i in 0..n_spans {
+        let word = words[i % words.len()];
+        let end = offset + word.len();
+        spans.push(TaggedSpan {
+            span: MatchSpan::new(offset, end),
+            annotations: vec![Annotation::from(HashMap::from([(
+                "lemma".to_string(),
+                AnnotationValue::Str(word.to_string()),
+            )]))],
+        });
+        offset = end + 1;
+    }
+    TagResult {
+        name: "morph_analysis".to_string(),
+        attributes: vec!["lemma".to_string()],
+        ambiguous: true,
+        spans,
+    }
+}
+
+fn build_phrase_tagger(n_rules: usize) -> PhraseTagger {
+    let rules: Vec<PhraseRule> = PHRASE_PATTERNS[..n_rules]
+        .iter()
+        .map(|pattern| {
+            make_phrase_rule(
+                pattern.iter().map(|s| s.to_string()).collect(),
+                HashMap::from([("value".to_string(), AnnotationValue::Str("ENTITY".to_string()))]),
+                0,
+                0,
+            )
+        })
+        .collect();
+    let config = PhraseTaggerConfig {
+        common: CommonConfig {
+            output_layer: "phrases".to_string(),
+            output_attributes: vec!["value".to_string()],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            ..CommonConfig::default()
+        },
+        input_attribute: "lemma".to_string(),
+        ignore_case: false,
+        phrase_attribute: Some("phrase".to_string()),
+    };
+    PhraseTagger::new(rules, config).unwrap()
+}
+
+fn bench_phrase_tagger_input_size(c: &mut Criterion) {
+    let mut group = c.benchmark_group("phrase_tagger/input_size");
+    let tagger = build_phrase_tagger(8);
+
+    for &n_spans in &[100, 1_000, 10_000] {
+        let input = build_phrase_tagger_input(n_spans);
+        let label = format!("{}_spans", n_spans);
+
+        group.bench_with_input(BenchmarkId::new("tag", &label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_phrase_tagger_rule_count(c: &mut Criterion) {
+    let mut group = c.benchmark_group("phrase_tagger/rule_count");
+    let input = build_phrase_tagger_input(1_000);
+
+    for &n_rules in &[3, 8, 15] {
+        let tagger = build_phrase_tagger(n_rules);
+        let label = format!("{}_rules", n_rules);
+
+        group.bench_with_input(BenchmarkId::new("tag", &label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_phrase_tagger_ignore_case(c: &mut Criterion) {
+    let mut group = c.benchmark_group("phrase_tagger/ignore_case");
+    let input = build_phrase_tagger_input(1_000);
+
+    for &ignore_case in &[false, true] {
+        let rules: Vec<PhraseRule> = PHRASE_PATTERNS[..8]
+            .iter()
+            .map(|pattern| {
+                make_phrase_rule(
+                    pattern.iter().map(|s| s.to_string()).collect(),
+                    HashMap::from([("value".to_string(), AnnotationValue::Str("ENTITY".to_string()))]),
+                    0,
+                    0,
+                )
+            })
+            .collect();
+        let config = PhraseTaggerConfig {
+            common: CommonConfig {
+                output_layer: "phrases".to_string(),
+                output_attributes: vec!["value".to_string()],
+                conflict_strategy: ConflictStrategy::KeepAll,
+                ..CommonConfig::default()
+            },
+            input_attribute: "lemma".to_string(),
+            ignore_case,
+            phrase_attribute: Some("phrase".to_string()),
+        };
+        let tagger = PhraseTagger::new(rules, config).unwrap();
+        let label = if ignore_case { "ignore_case=true" } else { "ignore_case=false" };
+
+        group.bench_with_input(BenchmarkId::new("tag", label), &input, |b, input| {
+            b.iter(|| {
+                let result = tagger.tag(black_box(input));
+                black_box(&result);
+            });
+        });
+    }
+    group.finish();
+}
+
 criterion_group!(
     tagger_bench_group,
     bench_regex_text_size,
@@ -355,6 +648,12 @@ criterion_group!(
     bench_conflict_resolution,
     bench_regex_conflict_strategies,
     bench_lowercase_overhead,
+    bench_span_tagger_input_size,
+    bench_span_tagger_rule_count,
+    bench_span_tagger_ignore_case,
+    bench_phrase_tagger_input_size,
+    bench_phrase_tagger_rule_count,
+    bench_phrase_tagger_ignore_case,
 );
 
 criterion_main!(tagger_bench_group);

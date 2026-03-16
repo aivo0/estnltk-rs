@@ -7,3 +7,10 @@ edition = "2021"
 estnltk-core = { path = "../estnltk-core" }
 estnltk-taggers = { path = "../estnltk-taggers" }
 vabamorf-rs = { path = "../vabamorf-rs" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "morph_benchmarks"
+harness = false
