@@ -255,6 +255,7 @@ dependencies = [
 name = "estnltk-grammar"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "estnltk-core",
  "smallvec",
  "thiserror",

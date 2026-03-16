@@ -18,6 +18,7 @@ The project is a Cargo workspace of focused crates:
 | `estnltk-csv` | CSV rule loading with typed columns (string, int, float, bool, regex) |
 | `estnltk-taggers` | 4 rule-based taggers: `RegexTagger`, `SubstringTagger`, `SpanTagger`, `PhraseTagger` |
 | `estnltk-morph` | Morphological rule expansion via Vabamorf |
+| `estnltk-grammar` | Finite grammar tagger: bottom-up chart parsing with conflict resolution, SEQ/MSEQ support, decorators, validators |
 | `estnltk-python` | PyO3 bindings: `RsRegexTagger`, `RsSubstringTagger`, `RsSpanTagger`, `RsPhraseTagger`, `RsVabamorf` |
 | `vabamorf-rs` | Safe Rust wrapper around C++ Vabamorf (analysis, synthesis, spellcheck, syllabification) |
 | `vabamorf-sys` | Raw FFI bindings to C++ Vabamorf |
@@ -90,20 +91,45 @@ All benchmarks verify output parity — both implementations produce identical s
 | medium | 10 KB | 50 | 5.13 | 1.40 | **3.7x** |
 | large | 100 KB | 207 | 97.47 | 27.24 | **3.6x** |
 
-### Rust-only Criterion benchmarks (10 KB text, 10 patterns)
+### Rust-only Criterion benchmarks
+
+#### Taggers (10 KB text, 10 patterns)
 
 | Benchmark | Time |
 |-----------|------|
-| RegexTagger tag | 96.6 µs |
-| SubstringTagger tag | 42.3 µs |
-| KEEP_ALL strategy | 104.2 µs |
-| KEEP_MAXIMAL strategy | 107.8 µs |
-| KEEP_MINIMAL strategy | 120.3 µs |
-| lowercase=false | 99.2 µs |
-| lowercase=true | 105.6 µs |
-| keep_maximal (1000 spans) | 1.81 µs |
-| keep_minimal (1000 spans) | 13.6 µs |
-| priority_resolver (1000 spans) | 638.3 µs |
+| RegexTagger tag | 112 µs |
+| SubstringTagger tag | 55 µs |
+| KEEP_ALL strategy | 113 µs |
+| KEEP_MAXIMAL strategy | 109 µs |
+| KEEP_MINIMAL strategy | 110 µs |
+| lowercase=false | 107 µs |
+| lowercase=true | 111 µs |
+| SpanTagger (1000 spans, 10 rules) | 70 µs |
+| PhraseTagger (1000 spans, 8 rules) | 249 µs |
+| keep_maximal (1000 spans) | 1.85 µs |
+| keep_minimal (1000 spans) | 5.03 µs |
+| priority_resolver (1000 spans) | 198 µs |
+
+#### Grammar tagger
+
+| Benchmark | Time |
+|-----------|------|
+| Graph construction (20 spans) | 10.3 µs |
+| Graph construction (100 spans) | 53 µs |
+| Graph construction (500 spans) | 276 µs |
+| Graph construction (2000 spans) | 1.10 ms |
+| Parse (20 spans, 4 rules) | 34.9 µs |
+| Parse (100 spans, 4 rules) | 181 µs |
+| Parse (500 spans, 4 rules) | 919 µs |
+| Parse (100 spans, 2 rules) | 104 µs |
+| Parse (100 spans, 12 rules) | 469 µs |
+| Parse depth 2 | 2.4 µs |
+| Parse depth 4 | 3.7 µs |
+| Parse depth 8 | 6.7 µs |
+| Full pipeline (100 spans) | 186 µs |
+| Full pipeline (500 spans) | 949 µs |
+| Priority resolution overhead | +17% |
+| Decorator overhead | +48% |
 
 **Notes:**
 - Speedup is end-to-end including PyO3 serialization overhead (Python dict construction on return). Pure Rust throughput is higher.
@@ -126,21 +152,24 @@ Both implementations wrap the same C++ Vabamorf library. The benchmark measures 
 
 Performance is near-identical since both call the same C++ code. The Rust port's value is not speed but **integration**: morphological expansion feeds directly into SubstringTagger without crossing the Python boundary.
 
-### Rust-only Criterion: Vabamorf (`cargo bench --features vabamorf`)
+#### Vabamorf and morph expander
 
 | Benchmark | Time |
 |-----------|------|
-| analyze disambiguated (6 words) | 263 µs |
-| analyze raw (6 words) | 89 µs |
-| analyze disambiguated (49 words) | 2.17 ms |
-| analyze raw (49 words) | 929 µs |
-| synthesize (10 calls) | 112 µs |
-| spellcheck (49 words) | 348 µs |
-| syllabify (49 words) | 24 µs |
-| noun_forms_expander (8 nouns) | 2.01 ms |
+| analyze disambiguated (6 words) | 260 µs |
+| analyze raw (6 words) | 112 µs |
+| analyze disambiguated (49 words) | 2.37 ms |
+| analyze raw (49 words) | 1.09 ms |
+| synthesize (5 calls) | 52.5 µs |
+| spellcheck correct (6 words) | 30.8 µs |
+| spellcheck suggest (6 words) | 6.76 ms |
+| syllabify (49 words) | 25.2 µs |
+| noun_forms_expander (8 nouns) | 2.06 ms |
+| rule expansion (8 rules) | 2.02 ms |
 
 ## Limitations
 
-- **No decorators** — Rust produces static annotations only. Decorators can be applied Python-side on the output.
+- **Tagger decorators** — `RegexTagger`, `SubstringTagger`, `SpanTagger`, and `PhraseTagger` produce static annotations only. The grammar tagger supports decorators, validators, and scoring callbacks natively. For the other taggers, decorators can be applied Python-side on the output.
+- **Grammar tagger Python bindings** — The `estnltk-grammar` crate is fully functional from Rust but not yet exposed via PyO3 bindings.
 - **Leftmost-longest semantics** — resharp uses leftmost-longest (not leftmost-first). `cat|catfish` matches "catfish" in resharp vs "cat" in Python `re`.
 - **No lazy quantifiers** — `.*?` not supported. Use character class negation or lookahead instead.

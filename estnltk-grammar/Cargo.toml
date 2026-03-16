@@ -7,3 +7,10 @@ edition = "2021"
 estnltk-core = { path = "../estnltk-core" }
 thiserror.workspace = true
 smallvec.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "grammar_benchmarks"
+harness = false
