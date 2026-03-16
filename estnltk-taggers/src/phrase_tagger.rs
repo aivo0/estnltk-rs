@@ -336,16 +336,18 @@ impl PhraseTagger {
                     annotation.insert(k.clone(), v.clone());
                 }
 
+                // Build the phrase tuple value once for phrase_attribute and pattern_attribute.
+                let phrase_val = AnnotationValue::List(
+                    phrase_match
+                        .phrase
+                        .iter()
+                        .map(|s| AnnotationValue::Str(s.clone()))
+                        .collect(),
+                );
+
                 // Add phrase attribute.
                 if let Some(ref attr_name) = self.config.phrase_attribute {
-                    let phrase_val = AnnotationValue::List(
-                        phrase_match
-                            .phrase
-                            .iter()
-                            .map(|s| AnnotationValue::Str(s.clone()))
-                            .collect(),
-                    );
-                    annotation.insert(attr_name.clone(), phrase_val);
+                    annotation.insert(attr_name.clone(), phrase_val.clone());
                 }
 
                 // Optionally add group/priority/pattern attributes.
@@ -356,15 +358,6 @@ impl PhraseTagger {
                     annotation.insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
                 }
                 if let Some(ref attr_name) = self.config.common.pattern_attribute {
-                    // Pattern attribute stores the phrase tuple (same as phrase_attribute
-                    // in Python PhraseTagger).
-                    let phrase_val = AnnotationValue::List(
-                        phrase_match
-                            .phrase
-                            .iter()
-                            .map(|s| AnnotationValue::Str(s.clone()))
-                            .collect(),
-                    );
                     annotation.insert(attr_name.clone(), phrase_val);
                 }
 
@@ -459,12 +452,7 @@ mod tests {
             common: CommonConfig {
                 output_layer: "phrases".to_string(),
                 output_attributes: vec!["value".to_string()],
-                conflict_strategy: ConflictStrategy::KeepAll,
-                group_attribute: None,
-                priority_attribute: None,
-                pattern_attribute: None,
-                ambiguous_output_layer: true,
-                unique_patterns: false,
+                ..CommonConfig::default()
             },
             input_attribute: "lemma".to_string(),
             ignore_case: false,

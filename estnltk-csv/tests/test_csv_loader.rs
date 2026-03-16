@@ -35,12 +35,7 @@ fn test_csv_to_regex_tagger_integration() {
         common: CommonConfig {
             output_layer: "regexes".to_string(),
             output_attributes: all_attrs,
-            conflict_strategy: ConflictStrategy::KeepAll,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         lowercase_text: false,
         overlapped: false,
@@ -91,11 +86,7 @@ fn test_csv_with_priority_resolution() {
             output_layer: "regexes".to_string(),
             output_attributes: all_attrs,
             conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         lowercase_text: false,
         overlapped: false,
@@ -127,12 +118,7 @@ fn test_csv_estonian_patterns() {
         common: CommonConfig {
             output_layer: "regexes".to_string(),
             output_attributes: vec!["label".to_string()],
-            conflict_strategy: ConflictStrategy::KeepAll,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         lowercase_text: false,
         overlapped: false,
@@ -225,12 +211,7 @@ fn test_csv_regex_type_column_with_tagger() {
         common: CommonConfig {
             output_layer: "regexes".to_string(),
             output_attributes: all_attrs,
-            conflict_strategy: ConflictStrategy::KeepAll,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         lowercase_text: false,
         overlapped: false,

@@ -286,6 +286,21 @@ pub struct CommonConfig {
     pub unique_patterns: bool,
 }
 
+impl Default for CommonConfig {
+    fn default() -> Self {
+        Self {
+            output_layer: String::new(),
+            output_attributes: Vec::new(),
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        }
+    }
+}
+
 /// Tagger configuration for RegexTagger and SubstringTagger.
 #[derive(Debug)]
 pub struct TaggerConfig {

@@ -27,12 +27,7 @@ fn default_config() -> SpanTaggerConfig {
         common: CommonConfig {
             output_layer: "tagged".to_string(),
             output_attributes: vec!["value".to_string()],
-            conflict_strategy: ConflictStrategy::KeepAll,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         input_attribute: "lemma".to_string(),
         ignore_case: false,
@@ -169,7 +164,7 @@ fn test_pipeline_regex_to_span() {
     let config = SpanTaggerConfig {
         common: CommonConfig {
             output_attributes: vec!["category".to_string()],
-            ..default_config().common
+            ..CommonConfig::default()
         },
         input_attribute: "type".to_string(),
         ..default_config()
@@ -193,7 +188,7 @@ fn test_conflict_keep_maximal_overlapping() {
         common: CommonConfig {
             conflict_strategy: ConflictStrategy::KeepMaximal,
             output_attributes: vec!["v".to_string()],
-            ..default_config().common
+            ..CommonConfig::default()
         },
         ..default_config()
     };
@@ -223,7 +218,7 @@ fn test_pattern_attribute_recorded() {
         common: CommonConfig {
             output_attributes: vec!["v".to_string()],
             pattern_attribute: Some("_pattern_".to_string()),
-            ..default_config().common
+            ..CommonConfig::default()
         },
         ..default_config()
     };

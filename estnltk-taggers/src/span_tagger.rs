@@ -235,13 +235,7 @@ mod tests {
         SpanTaggerConfig {
             common: CommonConfig {
                 output_layer: "tagged".to_string(),
-                output_attributes: vec![],
-                conflict_strategy: ConflictStrategy::KeepAll,
-                group_attribute: None,
-                priority_attribute: None,
-                pattern_attribute: None,
-                ambiguous_output_layer: true,
-                unique_patterns: false,
+                ..CommonConfig::default()
             },
             input_attribute: "lemma".to_string(),
             ignore_case: false,

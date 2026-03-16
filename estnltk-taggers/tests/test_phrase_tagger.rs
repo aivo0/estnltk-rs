@@ -31,12 +31,7 @@ fn default_config() -> PhraseTaggerConfig {
         common: CommonConfig {
             output_layer: "phrases".to_string(),
             output_attributes: vec!["value".to_string()],
-            conflict_strategy: ConflictStrategy::KeepAll,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
+            ..CommonConfig::default()
         },
         input_attribute: "lemma".to_string(),
         ignore_case: false,
@@ -111,7 +106,7 @@ fn test_keep_maximal_overlapping_phrases() {
     let config = PhraseTaggerConfig {
         common: CommonConfig {
             conflict_strategy: ConflictStrategy::KeepMaximal,
-            ..default_config().common
+            ..CommonConfig::default()
         },
         ..default_config()
     };
@@ -204,7 +199,7 @@ fn test_non_ambiguous_output() {
     let config = PhraseTaggerConfig {
         common: CommonConfig {
             ambiguous_output_layer: false,
-            ..default_config().common
+            ..CommonConfig::default()
         },
         ..default_config()
     };
@@ -234,7 +229,7 @@ fn test_output_attributes() {
     let config = PhraseTaggerConfig {
         common: CommonConfig {
             output_attributes: vec!["type".to_string(), "score".to_string()],
-            ..default_config().common
+            ..CommonConfig::default()
         },
         phrase_attribute: None,
         ..default_config()

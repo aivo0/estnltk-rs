@@ -250,13 +250,8 @@ mod tests {
         TaggerConfig {
             common: CommonConfig {
                 output_layer: "test".to_string(),
-                output_attributes: vec![],
                 conflict_strategy: ConflictStrategy::KeepMaximal,
-                group_attribute: None,
-                priority_attribute: None,
-                pattern_attribute: None,
-                ambiguous_output_layer: true,
-                unique_patterns: false,
+                ..CommonConfig::default()
             },
             lowercase_text: false,
             overlapped: false,
