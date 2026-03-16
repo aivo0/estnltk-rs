@@ -9,19 +9,20 @@
 
 ## What's included
 
-| Module | Purpose |
-|--------|---------|
-| `src/types.rs` | Core data types: spans, annotations, rules, config |
-| `src/byte_char.rs` | UTF-8 byte↔char offset conversion (resharp returns byte offsets, EstNLTK uses char offsets) |
-| `src/conflict.rs` | Conflict resolution: `keep_maximal`, `keep_minimal`, priority resolver |
-| `src/tagger.rs` | RegexTagger core pipeline |
-| `src/substring_tagger.rs` | SubstringTagger with Aho-Corasick multi-pattern matching |
-| `src/csv_loader.rs` | CSV rule loading with typed columns |
-| `src/string_list.rs` | Pattern composition (StringList, ChoiceGroup) |
-| `src/expander.rs` | Morphological rule expansion via Vabamorf |
-| `src/lib.rs` | PyO3 bindings: `RsRegexTagger`, `RsSubstringTagger`, `RsVabamorf` |
-| `vabamorf-rs/` | Safe Rust wrapper around C++ Vabamorf (analysis, synthesis, spellcheck, syllabification) |
-| `vabamorf-sys/` | Raw FFI bindings to C++ Vabamorf |
+The project is a Cargo workspace of focused crates:
+
+| Crate | Purpose |
+|-------|---------|
+| `estnltk-core` | Foundation types (spans, annotations, rules, config), conflict resolution, byte↔char offset conversion |
+| `estnltk-patterns` | Regex pattern composition: `StringList`, `ChoiceGroup`, `RegexPattern` |
+| `estnltk-csv` | CSV rule loading with typed columns (string, int, float, bool, regex) |
+| `estnltk-taggers` | 4 rule-based taggers: `RegexTagger`, `SubstringTagger`, `SpanTagger`, `PhraseTagger` |
+| `estnltk-morph` | Morphological rule expansion via Vabamorf |
+| `estnltk-python` | PyO3 bindings: `RsRegexTagger`, `RsSubstringTagger`, `RsSpanTagger`, `RsPhraseTagger`, `RsVabamorf` |
+| `vabamorf-rs` | Safe Rust wrapper around C++ Vabamorf (analysis, synthesis, spellcheck, syllabification) |
+| `vabamorf-sys` | Raw FFI bindings to C++ Vabamorf |
+
+Pure-Rust users can depend on individual crates (e.g., `estnltk-core` + `estnltk-taggers`) without PyO3. Python users get everything through the `estnltk-python` crate, which exposes the `estnltk_regex_rs` module.
 
 ## Setup
 
@@ -30,7 +31,7 @@
 pip install maturin
 
 # Build and install the Python module
-cd estnltk-rs
+cd estnltk-regex-rs
 maturin develop
 ```
 
@@ -62,11 +63,11 @@ spans = rs_regex_tag("Hello 123", [{"pattern": r"[0-9]+", "attributes": {"type":
 ## Testing
 
 ```bash
-# Rust unit + integration tests
-cargo test
+# Rust unit + integration tests (all workspace crates)
+cargo test --workspace
 
 # Cross-implementation tests (requires estnltk installed)
-cd cross_tests && pytest test_cross_impl.py -v
+pytest cross_tests/ -v
 ```
 
 ## Performance: Rust vs Python

@@ -4,6 +4,23 @@ Thorough comparison of EstNLTK's `rule_taggers` subsystem with the Rust rewrite 
 
 Coverage legend: **Full** | **Partial** | **None** | **N/A** (not applicable to Rust)
 
+### Workspace Architecture
+
+The Rust implementation is organized as a Cargo workspace of focused crates:
+
+| Crate | Purpose |
+|-------|---------|
+| `estnltk-core` | Foundation types (`MatchSpan`, `TagResult`, `TaggerError`, `CommonConfig`, etc.), conflict resolution, byte↔char maps |
+| `estnltk-patterns` | Regex pattern composition (`StringList`, `ChoiceGroup`, `RegexPattern`) |
+| `estnltk-csv` | CSV rule loading |
+| `estnltk-taggers` | 4 rule-based taggers (`RegexTagger`, `SubstringTagger`, `SpanTagger`, `PhraseTagger`) |
+| `estnltk-morph` | Morphological expansion bridge (Vabamorf integration) |
+| `estnltk-python` | PyO3 bindings (`cdylib`) — exposes all functionality as the `estnltk_regex_rs` Python module |
+| `vabamorf-sys` | Raw C++ FFI bindings to Vabamorf |
+| `vabamorf-rs` | Safe Rust wrapper for Vabamorf |
+
+Pure-Rust users can depend on `estnltk-core` + `estnltk-taggers` (etc.) without pulling in PyO3. Python users get everything through the `estnltk-python` crate.
+
 ---
 
 ## 1. Tagger Types
@@ -360,26 +377,30 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 
 ## 14. Testing
 
-| Test Area | EstNLTK | estnltk-rs |
+Tests are distributed across the workspace crates. Each crate has unit tests in its source files and integration tests in its `tests/` directory.
+
+| Test Area | EstNLTK | estnltk-rs (crate) |
 |-----------|---------|------------|
-| Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `tests/test_conflict.rs` (8 tests) + `src/conflict.rs` (14 unit tests) |
-| Regex tagger integration | Implicit in conflict resolver tests | `tests/test_tagger.rs` (8 tests) + `src/tagger.rs` (42 unit tests) |
-| Substring tagger integration | Separate test file | `tests/test_substring_tagger.rs` (12 tests) + `src/substring_tagger.rs` (22 unit tests) |
+| Conflict resolution unit tests | In `test_custom_conflict_resolver.py` (across all 4 taggers) | `estnltk-core/tests/test_conflict.rs` (8 tests) + `estnltk-core/src/conflict.rs` (14 unit tests) |
+| Regex tagger integration | Implicit in conflict resolver tests | `estnltk-taggers/tests/test_tagger.rs` (8 tests) + `estnltk-taggers/src/regex_tagger.rs` (42 unit tests) |
+| Substring tagger integration | Separate test file | `estnltk-taggers/tests/test_substring_tagger.rs` (12 tests) + `estnltk-taggers/src/substring_tagger.rs` (22 unit tests) |
+| SpanTagger tests | Separate test file | `estnltk-taggers/tests/test_span_tagger.rs` (7 tests) + `estnltk-taggers/src/span_tagger.rs` (19 unit tests) |
+| PhraseTagger tests | Separate test file | `estnltk-taggers/tests/test_phrase_tagger.rs` (8 tests) + `estnltk-taggers/src/phrase_tagger.rs` (24 unit tests) |
 | Cross-implementation parity (regex) | — | `cross_tests/test_cross_impl.py` (23 tests) |
 | Cross-implementation parity (substring) | — | `cross_tests/test_cross_substring.py` (14 tests) |
-| Byte↔char conversion | — | `src/byte_char.rs` (4 unit tests) |
-| CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `tests/test_csv_loader.rs` (7 tests) + `src/csv_loader.rs` (14 unit tests) |
+| Cross-implementation parity (expander) | — | `cross_tests/test_expander.py` (19 tests) |
+| Byte↔char conversion | — | `estnltk-core/src/byte_char.rs` (8 unit tests) |
+| CSV vocabulary loading | `regex_vocabulary.csv` test fixture | `estnltk-csv/tests/test_csv_loader.rs` (7 tests) + `estnltk-csv/src/lib.rs` (14 unit tests) |
 | Capture group extraction | Implicit (group parameter in rules) | 13 unit tests + 2 integration tests (basic, multibyte, mixed rules, error cases) |
 | Overlapped matching | Implicit in existing test suite | 10 unit tests (basic, multibyte, capture groups, conflict resolution, attributes) |
 | Match attribute | Implicit in existing test suite | 7 unit tests (basic, capture groups, multibyte, lowercase, with attributes, disabled, overlapped) |
-| StringList pattern composition | `StringList` class tests | `src/string_list.rs` (16 unit tests) |
-| ChoiceGroup pattern composition | `ChoiceGroup` class tests | `src/string_list.rs` (16 unit tests: 7 choice group + 9 merged string lists) |
-| RegexPattern composition | `RegexPattern` class tests | `src/string_list.rs` (13 unit tests: basic, composition with StringList, Estonian, escaped braces, error cases) |
-| Rule map introspection | Implicit in `Ruleset` / `AmbiguousRuleset` | `src/tagger.rs` (6 unit tests) + `src/substring_tagger.rs` (5 unit tests) |
+| StringList pattern composition | `StringList` class tests | `estnltk-patterns/src/string_list.rs` (16 unit tests) |
+| ChoiceGroup pattern composition | `ChoiceGroup` class tests | `estnltk-patterns/src/choice_group.rs` (7 unit tests) + `estnltk-patterns/src/merged_lists.rs` (9 unit tests) |
+| RegexPattern composition | `RegexPattern` class tests | `estnltk-patterns/src/regex_pattern.rs` (13 unit tests: basic, composition with StringList, Estonian, escaped braces, error cases) |
+| Rule map introspection | Implicit in `Ruleset` / `AmbiguousRuleset` | `estnltk-taggers/src/regex_tagger.rs` (6 unit tests) + `estnltk-taggers/src/substring_tagger.rs` (5 unit tests) |
+| Morphological expansion | — | `estnltk-morph/tests/test_expander.rs` (6 tests) + `estnltk-morph/src/lib.rs` (7 unit tests) |
 | Decorator chain tests | Various in existing test suite | — |
 | Custom conflict resolver | `_conflict_resolver_keep_first` in test suite | — |
-| SpanTagger tests | Separate test file | `tests/test_span_tagger.rs` (7 tests) + `src/span_tagger.rs` (19 unit tests) |
-| PhraseTagger tests | Separate test file | `tests/test_phrase_tagger.rs` (8 tests) + `src/phrase_tagger.rs` (24 unit tests) |
 
 ---
 
@@ -400,7 +421,7 @@ estnltk-rs `RsRegexTagger.tag()` returns:
 | PhraseTagger parameters (16) | 11 | 3 | 1 (+1 N/A) |
 | Data model (13 concepts) | 2 | 6 | 5 |
 
-**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. SpanTagger: exact string matching of annotation attribute values against a ruleset, with `ignore_case`, all six conflict strategies, group/priority/pattern attributes, ambiguous/non-ambiguous output, and `missing_attributes` validation — matching EstNLTK's `SpanTagger` core functionality for static rules. Takes a `TagResult` dict as input, enabling pipeline composition (`RsRegexTagger.tag()` → `RsSpanTagger.tag()`). PhraseTagger: sequential attribute value matching across consecutive spans, with heads-index-based matching algorithm (direct port of Python's `extract_annotations`), all six conflict strategies (using bounding spans), `phrase_attribute`/`group_attribute`/`priority_attribute`/`pattern_attribute`, ambiguous/non-ambiguous output, and ambiguous input annotation handling — matching EstNLTK's `PhraseTagger` core functionality for static rules. Output `base_span` is a tuple of `(start, end)` tuples matching EstNLTK's `EnvelopingBaseSpan` serialization. CSV rule loading with typed columns (int, float, regex, string, bool) — the `regex` type validates patterns with resharp at load time, matching EstNLTK's `CONVERSION_MAP["regex"]` which compiles to `regex.Regex`. Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `rule_map` property: maps pattern strings/tuples to grouped rules on all four taggers — matching EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` introspection API. `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). `RegexPattern` template composition: `rs_regex_pattern(template, components)` substitutes named placeholders with non-capture-group-wrapped sub-patterns and validates the result — matching EstNLTK's `RegexPattern` core pattern building (without the `RegexElement` test infrastructure). Morphological expansion: `noun_forms_expander` and `default_expander` via Vabamorf FFI bindings (feature-gated), integrated into `SubstringTagger` via `expander`/`vabamorf` parameters. Verified by 56 cross-implementation tests (23 regex + 14 substring + 19 expander) including Estonian multi-byte text. 255 Rust tests total (204 unit + 50 integration + 1 doc test).
+**What works identically:** Core regex matching → conflict resolution → annotation assembly pipeline for static attributes, including capture group extraction (any group index). Two-pass capture group support: resharp finds the full match, an anchored `regex::Regex` extracts the requested group from the matched substring — preserving resharp's leftmost-longest semantics. Overlapped matching (`overlapped=true`): iteratively re-searches from `match.start + 1` after each match, finding all overlapping spans — matching Python's `regex.finditer(overlapped=True)` semantics. Substring matching with Aho-Corasick, token separator boundary checking, and all conflict strategies. SpanTagger: exact string matching of annotation attribute values against a ruleset, with `ignore_case`, all six conflict strategies, group/priority/pattern attributes, ambiguous/non-ambiguous output, and `missing_attributes` validation — matching EstNLTK's `SpanTagger` core functionality for static rules. Takes a `TagResult` dict as input, enabling pipeline composition (`RsRegexTagger.tag()` → `RsSpanTagger.tag()`). PhraseTagger: sequential attribute value matching across consecutive spans, with heads-index-based matching algorithm (direct port of Python's `extract_annotations`), all six conflict strategies (using bounding spans), `phrase_attribute`/`group_attribute`/`priority_attribute`/`pattern_attribute`, ambiguous/non-ambiguous output, and ambiguous input annotation handling — matching EstNLTK's `PhraseTagger` core functionality for static rules. Output `base_span` is a tuple of `(start, end)` tuples matching EstNLTK's `EnvelopingBaseSpan` serialization. CSV rule loading with typed columns (int, float, regex, string, bool) — the `regex` type validates patterns with resharp at load time, matching EstNLTK's `CONVERSION_MAP["regex"]` which compiles to `regex.Regex`. Missing attribute validation and annotation normalization (missing attributes filled with `Null`). Ambiguous/non-ambiguous output layer control (`ambiguous_output_layer` parameter). Ruleset uniqueness enforcement (`unique_patterns` parameter — when `true`, rejects duplicate patterns matching EstNLTK's `Ruleset` semantics; default `false` matches `AmbiguousRuleset`). `rule_map` property: maps pattern strings/tuples to grouped rules on all four taggers — matching EstNLTK's `Ruleset.rule_map` / `AmbiguousRuleset.rule_map` introspection API. `StringList` pattern composition: longest-first sorting, regex escaping, case-insensitive conversion, character replacement maps, and deduplication — matching EstNLTK's `regex_library.StringList` core functionality. `ChoiceGroup` pattern composition: simple alternation via `rs_choice_group_pattern` (validates and joins patterns) and compatible StringList merging via `rs_merged_string_lists_pattern` (merges multiple string lists with longest-first sorting guarantee). `RegexPattern` template composition: `rs_regex_pattern(template, components)` substitutes named placeholders with non-capture-group-wrapped sub-patterns and validates the result — matching EstNLTK's `RegexPattern` core pattern building (without the `RegexElement` test infrastructure). Morphological expansion: `noun_forms_expander` and `default_expander` via Vabamorf FFI bindings (feature-gated), integrated into `SubstringTagger` via `expander`/`vabamorf` parameters. Verified by 56 cross-implementation tests (23 regex + 14 substring + 19 expander) including Estonian multi-byte text. 283 Rust tests total across 8 workspace crates (unit + integration + doc tests).
 
 **Biggest gaps:** Decorators (global and dynamic), regex library test infrastructure (`RegexElement`).
 
