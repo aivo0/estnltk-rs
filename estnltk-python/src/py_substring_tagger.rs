@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use estnltk_core::{ConflictStrategy, TaggerConfig};
+use estnltk_core::{CommonConfig, ConflictStrategy, TaggerConfig};
 use estnltk_taggers::{SubstringRule, SubstringTagger};
 
 use crate::py_helpers::parse_pattern_fields;
@@ -82,15 +82,17 @@ impl PySubstringTagger {
             ?;
 
         let config = TaggerConfig {
-            output_layer: output_layer.to_string(),
-            output_attributes: output_attributes.unwrap_or_default(),
-            conflict_strategy: strategy,
+            common: CommonConfig {
+                output_layer: output_layer.to_string(),
+                output_attributes: output_attributes.unwrap_or_default(),
+                conflict_strategy: strategy,
+                group_attribute,
+                priority_attribute,
+                pattern_attribute,
+                ambiguous_output_layer,
+                unique_patterns,
+            },
             lowercase_text,
-            group_attribute,
-            priority_attribute,
-            pattern_attribute,
-            ambiguous_output_layer,
-            unique_patterns,
             overlapped: false,
             match_attribute: None,
         };
@@ -209,15 +211,17 @@ pub fn rs_substring_tag(
         ?;
 
     let config = TaggerConfig {
-        output_layer: "substrings".to_string(),
-        output_attributes: all_attr_names,
-        conflict_strategy: strategy,
+        common: CommonConfig {
+            output_layer: "substrings".to_string(),
+            output_attributes: all_attr_names,
+            conflict_strategy: strategy,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer,
+            unique_patterns: false,
+        },
         lowercase_text,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     };

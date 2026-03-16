@@ -3,7 +3,7 @@ use std::path::Path;
 
 use estnltk_morph::{default_expander, expand_rules, noun_forms_expander};
 use estnltk_taggers::{SubstringTagger, SubstringRule};
-use estnltk_core::{AnnotationValue, ConflictStrategy, TaggerConfig};
+use estnltk_core::{AnnotationValue, CommonConfig, ConflictStrategy, TaggerConfig};
 use vabamorf_rs::Vabamorf;
 
 fn get_vm() -> Vabamorf {
@@ -15,15 +15,17 @@ fn get_vm() -> Vabamorf {
 
 fn default_config() -> TaggerConfig {
     TaggerConfig {
-        output_layer: "test".to_string(),
-        output_attributes: vec![],
-        conflict_strategy: ConflictStrategy::KeepAll,
+        common: CommonConfig {
+            output_layer: "test".to_string(),
+            output_attributes: vec![],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     }

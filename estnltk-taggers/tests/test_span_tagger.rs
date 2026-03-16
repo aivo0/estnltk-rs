@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use estnltk_taggers::{SpanRule, SpanTagger, SpanTaggerConfig};
 use estnltk_core::{
-    Annotation, AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggedSpan,
+    Annotation, AnnotationValue, CommonConfig, ConflictStrategy, MatchSpan, TagResult, TaggedSpan,
 };
 
 fn make_input(
@@ -24,16 +24,18 @@ fn make_input(
 
 fn default_config() -> SpanTaggerConfig {
     SpanTaggerConfig {
-        output_layer: "tagged".to_string(),
+        common: CommonConfig {
+            output_layer: "tagged".to_string(),
+            output_attributes: vec!["value".to_string()],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         input_attribute: "lemma".to_string(),
-        output_attributes: vec!["value".to_string()],
-        conflict_strategy: ConflictStrategy::KeepAll,
         ignore_case: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
     }
 }
 
@@ -165,8 +167,11 @@ fn test_pipeline_regex_to_span() {
     ];
 
     let config = SpanTaggerConfig {
+        common: CommonConfig {
+            output_attributes: vec!["category".to_string()],
+            ..default_config().common
+        },
         input_attribute: "type".to_string(),
-        output_attributes: vec!["category".to_string()],
         ..default_config()
     };
     let tagger = SpanTagger::new(rules, config).unwrap();
@@ -185,8 +190,11 @@ fn test_conflict_keep_maximal_overlapping() {
     ];
 
     let config = SpanTaggerConfig {
-        conflict_strategy: ConflictStrategy::KeepMaximal,
-        output_attributes: vec!["v".to_string()],
+        common: CommonConfig {
+            conflict_strategy: ConflictStrategy::KeepMaximal,
+            output_attributes: vec!["v".to_string()],
+            ..default_config().common
+        },
         ..default_config()
     };
     let tagger = SpanTagger::new(rules, config).unwrap();
@@ -212,8 +220,11 @@ fn test_pattern_attribute_recorded() {
     ];
 
     let config = SpanTaggerConfig {
-        output_attributes: vec!["v".to_string()],
-        pattern_attribute: Some("_pattern_".to_string()),
+        common: CommonConfig {
+            output_attributes: vec!["v".to_string()],
+            pattern_attribute: Some("_pattern_".to_string()),
+            ..default_config().common
+        },
         ..default_config()
     };
     let tagger = SpanTagger::new(rules, config).unwrap();

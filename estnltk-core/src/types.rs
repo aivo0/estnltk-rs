@@ -261,13 +261,16 @@ impl std::str::FromStr for ConflictStrategy {
     }
 }
 
-/// Tagger configuration.
+/// Configuration fields shared by all tagger types (RegexTagger, SubstringTagger,
+/// SpanTagger, PhraseTagger).
+///
+/// Extracted to reduce duplication across `TaggerConfig`, `SpanTaggerConfig`, and
+/// `PhraseTaggerConfig`, which previously repeated these eight fields verbatim.
 #[derive(Debug)]
-pub struct TaggerConfig {
+pub struct CommonConfig {
     pub output_layer: String,
     pub output_attributes: Vec<String>,
     pub conflict_strategy: ConflictStrategy,
-    pub lowercase_text: bool,
     pub group_attribute: Option<String>,
     pub priority_attribute: Option<String>,
     pub pattern_attribute: Option<String>,
@@ -281,6 +284,13 @@ pub struct TaggerConfig {
     /// When `false` (default), duplicate patterns are allowed — matching
     /// EstNLTK's `AmbiguousRuleset` behavior.
     pub unique_patterns: bool,
+}
+
+/// Tagger configuration for RegexTagger and SubstringTagger.
+#[derive(Debug)]
+pub struct TaggerConfig {
+    pub common: CommonConfig,
+    pub lowercase_text: bool,
     /// When `true`, find overlapping matches by re-searching from
     /// `match.start + 1` after each match.  Matches EstNLTK's
     /// `RegexTagger(overlapped=True)` / Python `regex.finditer(overlapped=True)`.

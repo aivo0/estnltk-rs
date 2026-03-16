@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use estnltk_taggers::{make_phrase_rule, PhraseTagger, PhraseTaggerConfig};
 use estnltk_core::{
-    Annotation, AnnotationValue, ConflictStrategy, MatchSpan, TagResult, TaggedSpan,
+    Annotation, AnnotationValue, CommonConfig, ConflictStrategy, MatchSpan, TagResult, TaggedSpan,
 };
 
 fn make_input(
@@ -28,17 +28,19 @@ fn ann(lemma: &str) -> HashMap<String, AnnotationValue> {
 
 fn default_config() -> PhraseTaggerConfig {
     PhraseTaggerConfig {
-        output_layer: "phrases".to_string(),
+        common: CommonConfig {
+            output_layer: "phrases".to_string(),
+            output_attributes: vec!["value".to_string()],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         input_attribute: "lemma".to_string(),
-        output_attributes: vec!["value".to_string()],
-        conflict_strategy: ConflictStrategy::KeepAll,
         ignore_case: false,
         phrase_attribute: Some("phrase".to_string()),
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
     }
 }
 
@@ -107,7 +109,10 @@ fn test_keep_maximal_overlapping_phrases() {
         ),
     ];
     let config = PhraseTaggerConfig {
-        conflict_strategy: ConflictStrategy::KeepMaximal,
+        common: CommonConfig {
+            conflict_strategy: ConflictStrategy::KeepMaximal,
+            ..default_config().common
+        },
         ..default_config()
     };
     let tagger = PhraseTagger::new(rules, config).unwrap();
@@ -197,7 +202,10 @@ fn test_non_ambiguous_output() {
         ),
     ];
     let config = PhraseTaggerConfig {
-        ambiguous_output_layer: false,
+        common: CommonConfig {
+            ambiguous_output_layer: false,
+            ..default_config().common
+        },
         ..default_config()
     };
     let tagger = PhraseTagger::new(rules, config).unwrap();
@@ -224,7 +232,10 @@ fn test_output_attributes() {
         0, 0,
     )];
     let config = PhraseTaggerConfig {
-        output_attributes: vec!["type".to_string(), "score".to_string()],
+        common: CommonConfig {
+            output_attributes: vec!["type".to_string(), "score".to_string()],
+            ..default_config().common
+        },
         phrase_attribute: None,
         ..default_config()
     };

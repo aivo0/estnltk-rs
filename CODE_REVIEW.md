@@ -273,6 +273,6 @@ The Python-dict extraction path reimplements the matching logic. Consider extrac
 | P3 | Improve O(n^2) priority resolver (#2) | DONE — early termination in `conflict.rs` |
 | P3 | has_missing_attributes sorted comparison (#13) | DONE — sorted `Vec` instead of `HashSet` |
 | -- | regex_escape intentional divergence (#11) | DOCUMENTED — comment in `string_list.rs` |
-| P3 | Shared config struct (#12) | DEFERRED — low ROI vs volume of field access changes |
-| -- | token_separators linear contains (#10) | DEFERRED — fine for typical 1-3 char sets |
+| P3 | Shared config struct (#12) | DONE — `CommonConfig` in `types.rs`, embedded in all tagger configs |
+| P3 | token_separators `HashSet<char>` (#10) | DONE — `HashSet<char>` in `substring_tagger.rs` |
 | -- | PhraseTagger extraction duplication (#14) | N/A — `PhraseTagger` has no `tag_from_py` path |

@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use aho_corasick::AhoCorasick;
 
@@ -9,9 +9,11 @@ use estnltk_core::resolve_conflicts;
 use estnltk_core::ConflictStrategy;
 use estnltk_core::{
     assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
-    has_missing_attributes, AnnotationValue, MatchSpan, TaggerError, TagResult, TaggerConfig,
-    TaggerRule,
+    has_missing_attributes, AnnotationValue, MatchSpan, TaggerError, TagResult,
+    TaggerConfig, TaggerRule,
 };
+#[cfg(test)]
+use estnltk_core::CommonConfig;
 
 /// A substring extraction rule — pattern string with static attributes.
 /// Unlike `ExtractionRule`, no compiled regex; the automaton handles matching.
@@ -63,7 +65,7 @@ pub struct SubstringTagger {
     pub rules: Vec<SubstringRule>,
     /// AC pattern_id → list of rule indices sharing that pattern.
     pattern_to_rules: Vec<Vec<usize>>,
-    token_separators: Vec<char>,
+    token_separators: HashSet<char>,
     pub config: TaggerConfig,
 }
 
@@ -78,7 +80,7 @@ impl SubstringTagger {
         config: TaggerConfig,
     ) -> Result<Self, TaggerError> {
         // Enforce unique patterns if configured (EstNLTK Ruleset semantics).
-        if config.unique_patterns {
+        if config.common.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
             check_unique_patterns(&patterns, config.lowercase_text)?;
         }
@@ -108,7 +110,7 @@ impl SubstringTagger {
         let automaton = AhoCorasick::new(&unique_patterns)
             .map_err(|e| TaggerError::Automaton(format!("Aho-Corasick build error: {}", e)))?;
 
-        let separators: Vec<char> = token_separators.chars().collect();
+        let separators: HashSet<char> = token_separators.chars().collect();
 
         Ok(Self {
             automaton,
@@ -135,7 +137,7 @@ impl SubstringTagger {
 
         // Step 3: Apply conflict resolution on unique spans.
         let resolved = resolve_conflicts(
-            self.config.conflict_strategy,
+            self.config.common.conflict_strategy,
             &all_matches,
             |pattern_id| {
                 let first_rule = self.pattern_to_rules[pattern_id][0];
@@ -204,19 +206,19 @@ impl SubstringTagger {
                 .map(move |&rule_idx| {
                     let annotation = build_rule_annotation(
                         &self.rules[rule_idx],
-                        &self.config.output_attributes,
-                        self.config.group_attribute.as_deref(),
-                        self.config.priority_attribute.as_deref(),
-                        self.config.pattern_attribute.as_deref(),
+                        &self.config.common.output_attributes,
+                        self.config.common.group_attribute.as_deref(),
+                        self.config.common.priority_attribute.as_deref(),
+                        self.config.common.pattern_attribute.as_deref(),
                     );
                     (match_span, annotation)
                 })
         });
         assemble_tag_result(
             entries,
-            &self.config.output_layer,
-            &self.config.output_attributes,
-            self.config.ambiguous_output_layer,
+            &self.config.common.output_layer,
+            &self.config.common.output_attributes,
+            self.config.common.ambiguous_output_layer,
         )
     }
 
@@ -246,15 +248,17 @@ mod tests {
 
     fn default_config() -> TaggerConfig {
         TaggerConfig {
-            output_layer: "test".to_string(),
-            output_attributes: vec![],
-            conflict_strategy: ConflictStrategy::KeepMaximal,
+            common: CommonConfig {
+                output_layer: "test".to_string(),
+                output_attributes: vec![],
+                conflict_strategy: ConflictStrategy::KeepMaximal,
+                group_attribute: None,
+                priority_attribute: None,
+                pattern_attribute: None,
+                ambiguous_output_layer: true,
+                unique_patterns: false,
+            },
             lowercase_text: false,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
             overlapped: false,
             match_attribute: None,
         }
@@ -334,7 +338,7 @@ mod tests {
             SubstringRule::new("last", a3, 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.output_attributes = vec!["a".to_string(), "b".to_string()];
+        cfg.common.output_attributes = vec!["a".to_string(), "b".to_string()];
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("first second last");
         assert_eq!(result.spans.len(), 3);
@@ -364,7 +368,7 @@ mod tests {
             SubstringRule::new("ef", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.conflict_strategy = ConflictStrategy::KeepAll;
+        cfg.common.conflict_strategy = ConflictStrategy::KeepAll;
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("abcdea--efg");
         assert_eq!(result.spans.len(), 7);
@@ -408,7 +412,7 @@ mod tests {
             SubstringRule::new("ef", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.conflict_strategy = ConflictStrategy::KeepMinimal;
+        cfg.common.conflict_strategy = ConflictStrategy::KeepMinimal;
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("abcdea--efg");
         assert_eq!(result.spans.len(), 2);
@@ -454,7 +458,7 @@ mod tests {
             SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.output_attributes = vec!["type".to_string()];
+        cfg.common.output_attributes = vec!["type".to_string()];
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("Washington");
         assert_eq!(result.spans.len(), 1);
@@ -503,7 +507,7 @@ mod tests {
             SubstringRule::new("world", a2, 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.output_attributes = vec!["type".to_string(), "score".to_string()];
+        cfg.common.output_attributes = vec!["type".to_string(), "score".to_string()];
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("hello world");
 
@@ -537,8 +541,8 @@ mod tests {
             SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.output_attributes = vec!["type".to_string()];
-        cfg.ambiguous_output_layer = false;
+        cfg.common.output_attributes = vec!["type".to_string()];
+        cfg.common.ambiguous_output_layer = false;
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("Washington");
 
@@ -564,7 +568,7 @@ mod tests {
             SubstringRule::new("Washington", a2, 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.output_attributes = vec!["type".to_string()];
+        cfg.common.output_attributes = vec!["type".to_string()];
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("Washington");
 
@@ -580,7 +584,7 @@ mod tests {
             SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.unique_patterns = true;
+        cfg.common.unique_patterns = true;
         let result = SubstringTagger::new(rules, "", cfg);
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("Duplicate pattern"));
@@ -593,7 +597,7 @@ mod tests {
             SubstringRule::new("world", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.unique_patterns = true;
+        cfg.common.unique_patterns = true;
         let result = SubstringTagger::new(rules, "", cfg);
         assert!(result.is_ok());
     }
@@ -606,7 +610,7 @@ mod tests {
             SubstringRule::new("hello", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.unique_patterns = true;
+        cfg.common.unique_patterns = true;
         cfg.lowercase_text = true;
         let result = SubstringTagger::new(rules, "", cfg);
         assert!(result.is_err());
@@ -631,7 +635,7 @@ mod tests {
             SubstringRule::new("world", HashMap::new(), 0, 0),
         ];
         let mut cfg = default_config();
-        cfg.pattern_attribute = Some("_pattern".to_string());
+        cfg.common.pattern_attribute = Some("_pattern".to_string());
         let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
         let result = tagger.tag("hello world");
         assert_eq!(result.spans.len(), 2);

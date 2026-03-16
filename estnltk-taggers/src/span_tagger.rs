@@ -3,9 +3,11 @@ use std::collections::HashMap;
 use estnltk_core::{resolve_conflicts, MatchEntry};
 use estnltk_core::{
     assemble_tag_result, build_rule_annotation, check_unique_patterns, compute_rule_map,
-    has_missing_attributes, AnnotationValue, ConflictStrategy, MatchSpan, TaggerError, TagResult,
-    TaggerRule,
+    has_missing_attributes, AnnotationValue, CommonConfig, MatchSpan,
+    TaggerError, TagResult, TaggerRule,
 };
+#[cfg(test)]
+use estnltk_core::ConflictStrategy;
 
 /// A rule for the SpanTagger — maps a pattern string to static attributes.
 ///
@@ -69,23 +71,16 @@ pub struct SpanTagger {
 /// Configuration for the SpanTagger.
 #[derive(Debug)]
 pub struct SpanTaggerConfig {
-    pub output_layer: String,
+    pub common: CommonConfig,
     pub input_attribute: String,
-    pub output_attributes: Vec<String>,
-    pub conflict_strategy: ConflictStrategy,
     pub ignore_case: bool,
-    pub group_attribute: Option<String>,
-    pub priority_attribute: Option<String>,
-    pub pattern_attribute: Option<String>,
-    pub ambiguous_output_layer: bool,
-    pub unique_patterns: bool,
 }
 
 impl SpanTagger {
     /// Create a new SpanTagger, validating configuration.
     pub fn new(rules: Vec<SpanRule>, config: SpanTaggerConfig) -> Result<Self, TaggerError> {
         // Enforce unique patterns if configured.
-        if config.unique_patterns {
+        if config.common.unique_patterns {
             let patterns: Vec<&str> = rules.iter().map(|r| r.pattern_str.as_str()).collect();
             check_unique_patterns(&patterns, config.ignore_case)?;
         }
@@ -115,7 +110,7 @@ impl SpanTagger {
 
         // Step 3: Apply conflict resolution.
         let resolved = resolve_conflicts(
-            self.config.conflict_strategy,
+            self.config.common.conflict_strategy,
             &all_matches,
             |rule_idx| (self.rules[rule_idx].group as i32, self.rules[rule_idx].priority),
         );
@@ -182,18 +177,18 @@ impl SpanTagger {
         let entries = resolved.iter().map(|&(match_span, rule_idx)| {
             let annotation = build_rule_annotation(
                 &self.rules[rule_idx],
-                &self.config.output_attributes,
-                self.config.group_attribute.as_deref(),
-                self.config.priority_attribute.as_deref(),
-                self.config.pattern_attribute.as_deref(),
+                &self.config.common.output_attributes,
+                self.config.common.group_attribute.as_deref(),
+                self.config.common.priority_attribute.as_deref(),
+                self.config.common.pattern_attribute.as_deref(),
             );
             (match_span, annotation)
         });
         assemble_tag_result(
             entries,
-            &self.config.output_layer,
-            &self.config.output_attributes,
-            self.config.ambiguous_output_layer,
+            &self.config.common.output_layer,
+            &self.config.common.output_attributes,
+            self.config.common.ambiguous_output_layer,
         )
     }
 
@@ -238,16 +233,18 @@ mod tests {
 
     fn default_config() -> SpanTaggerConfig {
         SpanTaggerConfig {
-            output_layer: "tagged".to_string(),
+            common: CommonConfig {
+                output_layer: "tagged".to_string(),
+                output_attributes: vec![],
+                conflict_strategy: ConflictStrategy::KeepAll,
+                group_attribute: None,
+                priority_attribute: None,
+                pattern_attribute: None,
+                ambiguous_output_layer: true,
+                unique_patterns: false,
+            },
             input_attribute: "lemma".to_string(),
-            output_attributes: vec![],
-            conflict_strategy: ConflictStrategy::KeepAll,
             ignore_case: false,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
         }
     }
 
@@ -261,10 +258,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["type".to_string()],
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["type".to_string()];
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -306,11 +301,9 @@ mod tests {
                 0,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["type".to_string()],
-            ignore_case: true,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["type".to_string()];
+        config.ignore_case = true;
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -338,10 +331,8 @@ mod tests {
                 1,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["type".to_string()],
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["type".to_string()];
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -359,10 +350,8 @@ mod tests {
             SpanRule::new("x", HashMap::new(), 0, 0),
             SpanRule::new("x", HashMap::new(), 0, 1),
         ];
-        let config = SpanTaggerConfig {
-            ambiguous_output_layer: false,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.ambiguous_output_layer = false;
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -381,10 +370,8 @@ mod tests {
             SpanRule::new("a", HashMap::new(), 0, 0),
             SpanRule::new("b", HashMap::new(), 0, 0),
         ];
-        let config = SpanTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepMaximal,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepMaximal;
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         // Span (0,5) contains span (1,3)
@@ -404,10 +391,8 @@ mod tests {
             SpanRule::new("a", HashMap::new(), 0, 0),
             SpanRule::new("b", HashMap::new(), 0, 0),
         ];
-        let config = SpanTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepMinimal,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepMinimal;
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         // Span (0,5) contains span (1,3)
@@ -431,13 +416,11 @@ mod tests {
                 2,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["type".to_string()],
-            group_attribute: Some("_group_".to_string()),
-            priority_attribute: Some("_priority_".to_string()),
-            pattern_attribute: Some("_pattern_".to_string()),
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["type".to_string()];
+        config.common.group_attribute = Some("_group_".to_string());
+        config.common.priority_attribute = Some("_priority_".to_string());
+        config.common.pattern_attribute = Some("_pattern_".to_string());
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -460,10 +443,8 @@ mod tests {
             SpanRule::new("x", HashMap::new(), 0, 0),
             SpanRule::new("x", HashMap::new(), 0, 1),
         ];
-        let config = SpanTaggerConfig {
-            unique_patterns: true,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.unique_patterns = true;
         let result = SpanTagger::new(rules, config);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Duplicate pattern"));
@@ -550,11 +531,9 @@ mod tests {
                 0,
             ),
         ];
-        let config = SpanTaggerConfig {
-            input_attribute: "count".to_string(),
-            output_attributes: vec!["label".to_string()],
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.input_attribute = "count".to_string();
+        config.common.output_attributes = vec!["label".to_string()];
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = TagResult {
@@ -583,10 +562,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["x".to_string(), "y".to_string()],
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["x".to_string(), "y".to_string()];
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -618,10 +595,8 @@ mod tests {
             SpanRule::new("a", HashMap::new(), 0, 0),
             SpanRule::new("b", HashMap::new(), 0, 1),
         ];
-        let config = SpanTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepAllExceptPriority;
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         // Two overlapping spans in the same group, different priorities.
@@ -647,10 +622,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = SpanTaggerConfig {
-            output_attributes: vec!["type".to_string()],
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["type".to_string()];
         let tagger = SpanTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -709,16 +682,18 @@ mod tests {
             ),
         ];
         let config = SpanTaggerConfig {
-            output_layer: "tagged_tokens".to_string(),
+            common: CommonConfig {
+                output_layer: "tagged_tokens".to_string(),
+                output_attributes: vec!["value".to_string()],
+                conflict_strategy: ConflictStrategy::KeepAll,
+                group_attribute: None,
+                priority_attribute: None,
+                pattern_attribute: None,
+                ambiguous_output_layer: true,
+                unique_patterns: false,
+            },
             input_attribute: "lemma".to_string(),
-            output_attributes: vec!["value".to_string()],
-            conflict_strategy: ConflictStrategy::KeepAll,
             ignore_case: false,
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
         };
         let tagger = SpanTagger::new(rules, config).unwrap();
 

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use estnltk_core::{AnnotationValue, ConflictStrategy};
+use estnltk_core::{AnnotationValue, CommonConfig, ConflictStrategy};
 use estnltk_taggers::{make_phrase_rule, PhraseTagger, PhraseTaggerConfig, PhraseRule};
 
 use crate::py_helpers::parse_tag_result;
@@ -92,17 +92,19 @@ impl PyPhraseTagger {
             ?;
 
         let config = PhraseTaggerConfig {
-            output_layer: output_layer.to_string(),
+            common: CommonConfig {
+                output_layer: output_layer.to_string(),
+                output_attributes: output_attributes.unwrap_or_default(),
+                conflict_strategy: strategy,
+                group_attribute,
+                priority_attribute,
+                pattern_attribute,
+                ambiguous_output_layer,
+                unique_patterns,
+            },
             input_attribute: input_attribute.to_string(),
-            output_attributes: output_attributes.unwrap_or_default(),
-            conflict_strategy: strategy,
             ignore_case,
             phrase_attribute: phrase_attribute.map(|s| s.to_string()),
-            group_attribute,
-            priority_attribute,
-            pattern_attribute,
-            ambiguous_output_layer,
-            unique_patterns,
         };
 
         let tagger = PhraseTagger::new(rules, config)
@@ -194,17 +196,19 @@ pub fn rs_phrase_tag(
         ?;
 
     let config = PhraseTaggerConfig {
-        output_layer: "phrases".to_string(),
+        common: CommonConfig {
+            output_layer: "phrases".to_string(),
+            output_attributes: all_attr_names,
+            conflict_strategy: strategy,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer,
+            unique_patterns: false,
+        },
         input_attribute: input_attribute.to_string(),
-        output_attributes: all_attr_names,
-        conflict_strategy: strategy,
         ignore_case,
         phrase_attribute: phrase_attribute.map(|s| s.to_string()),
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer,
-        unique_patterns: false,
     };
 
     let tagger = PhraseTagger::new(rules, config)

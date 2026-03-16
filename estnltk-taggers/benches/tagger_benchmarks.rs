@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use estnltk_core::{
     conflict_priority_resolver, keep_maximal_matches, keep_minimal_matches,
-    ConflictStrategy, MatchSpan, TaggerConfig,
+    CommonConfig, ConflictStrategy, MatchSpan, TaggerConfig,
 };
 use estnltk_taggers::{make_rule, RegexTagger, SubstringRule, SubstringTagger};
 
@@ -39,15 +39,17 @@ fn generate_text(target_bytes: usize) -> String {
 
 fn default_config(strategy: ConflictStrategy) -> TaggerConfig {
     TaggerConfig {
-        output_layer: "bench".to_string(),
-        output_attributes: vec![],
-        conflict_strategy: strategy,
+        common: CommonConfig {
+            output_layer: "bench".to_string(),
+            output_attributes: vec![],
+            conflict_strategy: strategy,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     }

@@ -5,7 +5,7 @@ use estnltk_core::{
 };
 use estnltk_core::{
     check_unique_phrase_patterns, has_missing_attributes, normalize_annotation, Annotation,
-    AnnotationValue, ConflictStrategy, EnvelopingTaggedSpan, MatchSpan, TaggerError,
+    AnnotationValue, CommonConfig, ConflictStrategy, EnvelopingTaggedSpan, MatchSpan, TaggerError,
     PhraseTagResult, TagResult,
 };
 
@@ -38,18 +38,11 @@ pub fn make_phrase_rule(
 /// Configuration for the PhraseTagger.
 #[derive(Debug)]
 pub struct PhraseTaggerConfig {
-    pub output_layer: String,
+    pub common: CommonConfig,
     pub input_attribute: String,
-    pub output_attributes: Vec<String>,
-    pub conflict_strategy: ConflictStrategy,
     pub ignore_case: bool,
     /// Name of the attribute storing the matched phrase tuple (default: "phrase").
     pub phrase_attribute: Option<String>,
-    pub group_attribute: Option<String>,
-    pub priority_attribute: Option<String>,
-    pub pattern_attribute: Option<String>,
-    pub ambiguous_output_layer: bool,
-    pub unique_patterns: bool,
 }
 
 /// The PhraseTagger — Rust equivalent of EstNLTK's `PhraseTagger`.
@@ -84,7 +77,7 @@ impl PhraseTagger {
         }
 
         // Enforce unique patterns if configured.
-        if config.unique_patterns {
+        if config.common.unique_patterns {
             let patterns: Vec<&[String]> = rules.iter().map(|r| r.pattern.as_slice()).collect();
             check_unique_phrase_patterns(&patterns, config.ignore_case)?;
         }
@@ -251,7 +244,7 @@ impl PhraseTagger {
             .map(|(i, m)| (m.bounding_span, i))
             .collect();
 
-        let resolved_indices: Vec<usize> = match self.config.conflict_strategy {
+        let resolved_indices: Vec<usize> = match self.config.common.conflict_strategy {
             ConflictStrategy::KeepAll => (0..sorted.len()).collect(),
             ConflictStrategy::KeepMaximal => {
                 keep_maximal_matches(&entries)
@@ -356,13 +349,13 @@ impl PhraseTagger {
                 }
 
                 // Optionally add group/priority/pattern attributes.
-                if let Some(ref attr_name) = self.config.group_attribute {
+                if let Some(ref attr_name) = self.config.common.group_attribute {
                     annotation.insert(attr_name.clone(), AnnotationValue::Int(rule.group as i64));
                 }
-                if let Some(ref attr_name) = self.config.priority_attribute {
+                if let Some(ref attr_name) = self.config.common.priority_attribute {
                     annotation.insert(attr_name.clone(), AnnotationValue::Int(rule.priority as i64));
                 }
-                if let Some(ref attr_name) = self.config.pattern_attribute {
+                if let Some(ref attr_name) = self.config.common.pattern_attribute {
                     // Pattern attribute stores the phrase tuple (same as phrase_attribute
                     // in Python PhraseTagger).
                     let phrase_val = AnnotationValue::List(
@@ -376,12 +369,12 @@ impl PhraseTagger {
                 }
 
                 // Normalize: fill missing output_attributes with Null.
-                normalize_annotation(&mut annotation, &self.config.output_attributes);
+                normalize_annotation(&mut annotation, &self.config.common.output_attributes);
 
                 annotations.push(annotation);
 
                 // If non-ambiguous output, only keep the first annotation.
-                if !self.config.ambiguous_output_layer {
+                if !self.config.common.ambiguous_output_layer {
                     break;
                 }
             }
@@ -389,7 +382,7 @@ impl PhraseTagger {
             // Merge into existing enveloping span or create new one.
             if let Some(last) = spans.last_mut() {
                 if last.bounding_span == phrase_match.bounding_span {
-                    if self.config.ambiguous_output_layer {
+                    if self.config.common.ambiguous_output_layer {
                         last.annotations.extend(annotations);
                     }
                     continue;
@@ -404,9 +397,9 @@ impl PhraseTagger {
         }
 
         PhraseTagResult {
-            name: self.config.output_layer.clone(),
-            attributes: self.config.output_attributes.clone(),
-            ambiguous: self.config.ambiguous_output_layer,
+            name: self.config.common.output_layer.clone(),
+            attributes: self.config.common.output_attributes.clone(),
+            ambiguous: self.config.common.ambiguous_output_layer,
             spans,
         }
     }
@@ -463,17 +456,19 @@ mod tests {
 
     fn default_config() -> PhraseTaggerConfig {
         PhraseTaggerConfig {
-            output_layer: "phrases".to_string(),
+            common: CommonConfig {
+                output_layer: "phrases".to_string(),
+                output_attributes: vec!["value".to_string()],
+                conflict_strategy: ConflictStrategy::KeepAll,
+                group_attribute: None,
+                priority_attribute: None,
+                pattern_attribute: None,
+                ambiguous_output_layer: true,
+                unique_patterns: false,
+            },
             input_attribute: "lemma".to_string(),
-            output_attributes: vec!["value".to_string()],
-            conflict_strategy: ConflictStrategy::KeepAll,
             ignore_case: false,
             phrase_attribute: Some("phrase".to_string()),
-            group_attribute: None,
-            priority_attribute: None,
-            pattern_attribute: None,
-            ambiguous_output_layer: true,
-            unique_patterns: false,
         }
     }
 
@@ -704,10 +699,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = PhraseTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepMaximal,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepMaximal;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -738,10 +731,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = PhraseTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepMinimal,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepMinimal;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -772,10 +763,8 @@ mod tests {
                 0,
             ),
         ];
-        let config = PhraseTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepAll,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepAll;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -805,10 +794,8 @@ mod tests {
                 1, // higher priority number = lower precedence
             ),
         ];
-        let config = PhraseTaggerConfig {
-            conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.conflict_strategy = ConflictStrategy::KeepAllExceptPriority;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -832,12 +819,10 @@ mod tests {
             5,
             2,
         )];
-        let config = PhraseTaggerConfig {
-            group_attribute: Some("_group_".to_string()),
-            priority_attribute: Some("_priority_".to_string()),
-            pattern_attribute: Some("_pattern_".to_string()),
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.group_attribute = Some("_group_".to_string());
+        config.common.priority_attribute = Some("_priority_".to_string());
+        config.common.pattern_attribute = Some("_pattern_".to_string());
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -968,10 +953,8 @@ mod tests {
                 1,
             ),
         ];
-        let config = PhraseTaggerConfig {
-            ambiguous_output_layer: false,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.ambiguous_output_layer = false;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![
@@ -991,10 +974,8 @@ mod tests {
             make_phrase_rule(vec!["a".to_string(), "b".to_string()], HashMap::new(), 0, 0),
             make_phrase_rule(vec!["a".to_string(), "b".to_string()], HashMap::new(), 0, 1),
         ];
-        let config = PhraseTaggerConfig {
-            unique_patterns: true,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.unique_patterns = true;
         let result = PhraseTagger::new(rules, config);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Duplicate phrase pattern"));
@@ -1028,11 +1009,9 @@ mod tests {
             0,
             0,
         )];
-        let config = PhraseTaggerConfig {
-            output_attributes: vec!["x".to_string(), "y".to_string()],
-            phrase_attribute: None,
-            ..default_config()
-        };
+        let mut config = default_config();
+        config.common.output_attributes = vec!["x".to_string(), "y".to_string()];
+        config.phrase_attribute = None;
         let tagger = PhraseTagger::new(rules, config).unwrap();
 
         let input = make_input_layer(vec![

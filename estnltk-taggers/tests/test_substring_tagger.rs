@@ -5,15 +5,17 @@ use estnltk_core::*;
 
 fn default_config() -> TaggerConfig {
     TaggerConfig {
-        output_layer: "test".to_string(),
-        output_attributes: vec![],
-        conflict_strategy: ConflictStrategy::KeepMaximal,
+        common: CommonConfig {
+            output_layer: "test".to_string(),
+            output_attributes: vec![],
+            conflict_strategy: ConflictStrategy::KeepMaximal,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     }
@@ -92,7 +94,7 @@ fn test_annotations_propagated() {
         SubstringRule::new("last", a3, 0, 0),
     ];
     let mut cfg = default_config();
-    cfg.output_attributes = vec!["a".to_string(), "b".to_string()];
+    cfg.common.output_attributes = vec!["a".to_string(), "b".to_string()];
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("first second last");
     assert_eq!(result.spans.len(), 3);
@@ -113,7 +115,7 @@ fn test_keep_minimal_overlapping() {
         SubstringRule::new("ef", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
-    cfg.conflict_strategy = ConflictStrategy::KeepMinimal;
+    cfg.common.conflict_strategy = ConflictStrategy::KeepMinimal;
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("abcdea--efg");
     assert_eq!(result.spans.len(), 2);
@@ -152,7 +154,7 @@ fn test_keep_all_overlapping() {
         SubstringRule::new("ef", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
-    cfg.conflict_strategy = ConflictStrategy::KeepAll;
+    cfg.common.conflict_strategy = ConflictStrategy::KeepAll;
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("abcdea--efg");
     assert_eq!(result.spans.len(), 7);
@@ -181,7 +183,7 @@ fn test_ambiguous_two_rules_same_pattern() {
         SubstringRule::new("Washington", a2, 0, 0),
     ];
     let mut cfg = default_config();
-    cfg.output_attributes = vec!["type".to_string(), "country".to_string()];
+    cfg.common.output_attributes = vec!["type".to_string(), "country".to_string()];
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("Washington");
     assert_eq!(result.spans.len(), 1);
@@ -195,7 +197,7 @@ fn test_pattern_attribute_injection() {
         SubstringRule::new("world", HashMap::new(), 0, 0),
     ];
     let mut cfg = default_config();
-    cfg.pattern_attribute = Some("_pattern".to_string());
+    cfg.common.pattern_attribute = Some("_pattern".to_string());
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("hello world");
     assert_eq!(result.spans.len(), 2);
@@ -221,8 +223,8 @@ fn test_priority_resolution() {
         SubstringRule::new("hell", a2, 0, 1),
     ];
     let mut cfg = default_config();
-    cfg.conflict_strategy = ConflictStrategy::KeepAllExceptPriority;
-    cfg.output_attributes = vec!["type".to_string()];
+    cfg.common.conflict_strategy = ConflictStrategy::KeepAllExceptPriority;
+    cfg.common.output_attributes = vec!["type".to_string()];
     let tagger = SubstringTagger::new(rules, "", cfg).unwrap();
     let result = tagger.tag("hello world");
     assert_eq!(result.spans.len(), 1);

@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use estnltk_core::{byte_to_char_map, ConflictStrategy, TaggerConfig};
+use estnltk_core::{byte_to_char_map, CommonConfig, ConflictStrategy, TaggerConfig};
 use estnltk_taggers::{make_rule, ExtractionRule, RegexTagger};
 
 use crate::py_helpers::parse_pattern_fields;
@@ -49,15 +49,17 @@ impl PyRegexTagger {
             ?;
 
         let config = TaggerConfig {
-            output_layer: output_layer.to_string(),
-            output_attributes: output_attributes.unwrap_or_default(),
-            conflict_strategy: strategy,
+            common: CommonConfig {
+                output_layer: output_layer.to_string(),
+                output_attributes: output_attributes.unwrap_or_default(),
+                conflict_strategy: strategy,
+                group_attribute,
+                priority_attribute,
+                pattern_attribute,
+                ambiguous_output_layer,
+                unique_patterns,
+            },
             lowercase_text,
-            group_attribute,
-            priority_attribute,
-            pattern_attribute,
-            ambiguous_output_layer,
-            unique_patterns,
             overlapped,
             match_attribute,
         };
@@ -177,15 +179,17 @@ pub fn rs_regex_tag(
         ?;
 
     let config = TaggerConfig {
-        output_layer: "regexes".to_string(),
-        output_attributes: all_attr_names,
-        conflict_strategy: strategy,
+        common: CommonConfig {
+            output_layer: "regexes".to_string(),
+            output_attributes: all_attr_names,
+            conflict_strategy: strategy,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer,
+            unique_patterns: false,
+        },
         lowercase_text,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer,
-        unique_patterns: false,
         overlapped,
         match_attribute,
     };

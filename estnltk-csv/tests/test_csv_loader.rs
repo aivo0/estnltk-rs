@@ -32,15 +32,17 @@ fn test_csv_to_regex_tagger_integration() {
     }
 
     let config = TaggerConfig {
-        output_layer: "regexes".to_string(),
-        output_attributes: all_attrs,
-        conflict_strategy: ConflictStrategy::KeepAll,
+        common: CommonConfig {
+            output_layer: "regexes".to_string(),
+            output_attributes: all_attrs,
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     };
@@ -85,15 +87,17 @@ fn test_csv_with_priority_resolution() {
     }
 
     let tagger_config = TaggerConfig {
-        output_layer: "regexes".to_string(),
-        output_attributes: all_attrs,
-        conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
+        common: CommonConfig {
+            output_layer: "regexes".to_string(),
+            output_attributes: all_attrs,
+            conflict_strategy: ConflictStrategy::KeepAllExceptPriority,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     };
@@ -120,15 +124,17 @@ fn test_csv_estonian_patterns() {
     }
 
     let config = TaggerConfig {
-        output_layer: "regexes".to_string(),
-        output_attributes: vec!["label".to_string()],
-        conflict_strategy: ConflictStrategy::KeepAll,
+        common: CommonConfig {
+            output_layer: "regexes".to_string(),
+            output_attributes: vec!["label".to_string()],
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     };
@@ -216,15 +222,17 @@ fn test_csv_regex_type_column_with_tagger() {
     }
 
     let config = TaggerConfig {
-        output_layer: "regexes".to_string(),
-        output_attributes: all_attrs,
-        conflict_strategy: ConflictStrategy::KeepAll,
+        common: CommonConfig {
+            output_layer: "regexes".to_string(),
+            output_attributes: all_attrs,
+            conflict_strategy: ConflictStrategy::KeepAll,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer: true,
+            unique_patterns: false,
+        },
         lowercase_text: false,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer: true,
-        unique_patterns: false,
         overlapped: false,
         match_attribute: None,
     };

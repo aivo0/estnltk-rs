@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use estnltk_core::{ConflictStrategy, MatchSpan, TagResult};
+use estnltk_core::{CommonConfig, ConflictStrategy, MatchSpan, TagResult};
 use estnltk_taggers::{SpanRule, SpanTagger, SpanTaggerConfig};
 
 use crate::py_helpers::{parse_pattern_fields, parse_tag_result};
@@ -83,7 +83,7 @@ fn tag_from_py_dict(tagger: &SpanTagger, input: &Bound<'_, PyDict>) -> PyResult<
     all_matches.sort_by_key(|&(span, _)| (span.start, span.end));
 
     let resolved = estnltk_core::resolve_conflicts(
-        tagger.config.conflict_strategy,
+        tagger.config.common.conflict_strategy,
         &all_matches,
         |rule_idx| (tagger.rules[rule_idx].group as i32, tagger.rules[rule_idx].priority),
     );
@@ -130,16 +130,18 @@ impl PySpanTagger {
             ?;
 
         let config = SpanTaggerConfig {
-            output_layer: output_layer.to_string(),
+            common: CommonConfig {
+                output_layer: output_layer.to_string(),
+                output_attributes: output_attributes.unwrap_or_default(),
+                conflict_strategy: strategy,
+                group_attribute,
+                priority_attribute,
+                pattern_attribute,
+                ambiguous_output_layer,
+                unique_patterns,
+            },
             input_attribute: input_attribute.to_string(),
-            output_attributes: output_attributes.unwrap_or_default(),
-            conflict_strategy: strategy,
             ignore_case,
-            group_attribute,
-            priority_attribute,
-            pattern_attribute,
-            ambiguous_output_layer,
-            unique_patterns,
         };
 
         let tagger = SpanTagger::new(rules, config)
@@ -224,16 +226,18 @@ pub fn rs_span_tag(
         ?;
 
     let config = SpanTaggerConfig {
-        output_layer: "spans".to_string(),
+        common: CommonConfig {
+            output_layer: "spans".to_string(),
+            output_attributes: all_attr_names,
+            conflict_strategy: strategy,
+            group_attribute: None,
+            priority_attribute: None,
+            pattern_attribute: None,
+            ambiguous_output_layer,
+            unique_patterns: false,
+        },
         input_attribute: input_attribute.to_string(),
-        output_attributes: all_attr_names,
-        conflict_strategy: strategy,
         ignore_case,
-        group_attribute: None,
-        priority_attribute: None,
-        pattern_attribute: None,
-        ambiguous_output_layer,
-        unique_patterns: false,
     };
 
     let tagger = SpanTagger::new(rules, config)
