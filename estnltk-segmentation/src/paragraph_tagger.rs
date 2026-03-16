@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 use estnltk_core::MatchSpan;
@@ -24,7 +26,8 @@ pub fn detect_paragraphs(
         return Vec::new();
     }
 
-    let para_re = Regex::new(r"\s*\n\n").unwrap();
+    static PARA_RE: OnceLock<Regex> = OnceLock::new();
+    let para_re = PARA_RE.get_or_init(|| Regex::new(r"\s*\n\n").unwrap());
 
     // Find paragraph end positions (positions where paragraph-break gaps end)
     let mut paragraph_ends: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -33,11 +36,11 @@ pub fn detect_paragraphs(
     // We need the END positions of the non-gap segments (i.e., where paragraph text ends).
     // With gaps=True, the spans are the text BETWEEN the gap matches.
     // So we find all gap matches and collect the end positions of text segments.
+    let b2c = estnltk_core::byte_to_char_map(text);
     let mut last_end = 0;
     for m in para_re.find_iter(text) {
         // The text segment before this gap ends at m.start()
         // But we want char offset, not byte offset
-        let b2c = estnltk_core::byte_to_char_map(text);
         let gap_start_char = b2c[m.start()];
         if last_end < m.start() {
             paragraph_ends.insert(gap_start_char);

@@ -7,6 +7,5 @@ description = "Estonian text segmentation pipeline: tokens, compound tokens, wor
 [dependencies]
 estnltk-core = { path = "../estnltk-core" }
 regex = { workspace = true }
-thiserror = { workspace = true }
 
 [dev-dependencies]

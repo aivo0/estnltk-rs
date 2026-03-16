@@ -141,9 +141,10 @@ impl TokensTagger {
 
     /// Split certain spans into individual character spans.
     fn split_into_symbols(&self, spans: &[MatchSpan], spans_to_split: &[MatchSpan]) -> Vec<MatchSpan> {
+        let split_set: std::collections::HashSet<MatchSpan> = spans_to_split.iter().copied().collect();
         let mut new_spans = Vec::new();
         for &span in spans {
-            if spans_to_split.contains(&span) {
+            if split_set.contains(&span) {
                 // Split each character into its own span
                 for i in span.start..span.end {
                     new_spans.push(MatchSpan::new(i, i + 1));

@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use regex::Regex;
 
 use estnltk_core::MatchSpan;
@@ -34,7 +36,8 @@ pub fn fix_repeated_ending_punct(
     text: &str,
     c2b: &[usize],
 ) {
-    let ending_punct_re = Regex::new(r"^[.?!\u{2026}]+$").unwrap();
+    static ENDING_PUNCT_RE: OnceLock<Regex> = OnceLock::new();
+    let ending_punct_re = ENDING_PUNCT_RE.get_or_init(|| Regex::new(r"^[.?!\u{2026}]+$").unwrap());
     let mut repeated_ending_punct: Vec<String> = Vec::new();
 
     for (wid, word) in words.iter().enumerate() {
@@ -228,7 +231,7 @@ pub fn merge_mistakenly_split_sentences(
             } else {
                 &sentences[sid - 1]
             };
-            let prev_fixes: &Vec<String> = if !new_fixes.is_empty() {
+            let _prev_fixes: &Vec<String> = if !new_fixes.is_empty() {
                 new_fixes.last().unwrap()
             } else {
                 &sentence_fixes[sid - 1]
@@ -264,7 +267,6 @@ pub fn merge_mistakenly_split_sentences(
                     }
                 }
             }
-            let _ = prev_fixes; // used for reference
         }
 
         if merge {
@@ -329,7 +331,7 @@ fn find_new_sentence_ending(
     c2b: &[usize],
 ) -> Option<(usize, usize)> {
     if !pattern.shift_end {
-        return Option::None;
+        return None;
     }
 
     // Check end pattern for named group <end>
@@ -382,7 +384,7 @@ fn find_new_sentence_ending(
         }
     }
 
-    Option::None
+    None
 }
 
 /// Perform a merge-and-split operation on consecutive sentences.
@@ -411,10 +413,10 @@ fn perform_merge_split(
 
     // Validity check
     if prev_sent.len() + this_sent.len() != new_sentence1.len() + new_sentence2.len() {
-        return Option::None;
+        return None;
     }
     if new_sentence1.is_empty() || new_sentence2.is_empty() {
-        return Option::None;
+        return None;
     }
 
     Some((new_sentence1, new_sentence2))

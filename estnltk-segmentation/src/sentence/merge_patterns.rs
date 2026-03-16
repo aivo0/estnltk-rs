@@ -29,7 +29,7 @@ impl MergePattern {
 }
 
 // Estonian character patterns used in merge rules
-const HYPHEN_PAT: &str = r"(-|\u{2212}|\u{FF0D}|\u{02D7}|\u{FE63}|\u{002D}|\u{2010}|\u{2011}|\u{2012}|\u{2013}|\u{2014}|\u{2015}|-)";
+const HYPHEN_PAT: &str = r"(\u{2212}|\u{FF0D}|\u{02D7}|\u{FE63}|\u{002D}|\u{2010}|\u{2011}|\u{2012}|\u{2013}|\u{2014}|\u{2015})";
 const LC_LETTER: &str = "[a-z\u{00F6}\u{00E4}\u{00FC}\u{00F5}\u{017E}\u{0161}]";
 const UC_LETTER: &str = "[A-Z\u{00D6}\u{00C4}\u{00DC}\u{00D5}\u{017D}\u{0160}]";
 const NOT_LETTER: &str = "[^A-Z\u{00D6}\u{00C4}\u{00DC}\u{00D5}\u{017D}\u{0160}a-z\u{00F6}\u{00E4}\u{00FC}\u{00F5}\u{017E}\u{0161}]";

@@ -19,15 +19,6 @@ use sentence::{Sentence, SentenceConfig, SentenceTokenizer};
 use tokens_tagger::TokensTagger;
 use word_tagger::{assemble_words, Word};
 
-/// Error type for segmentation operations.
-#[derive(Debug, thiserror::Error)]
-pub enum SegmentationError {
-    #[error("Regex compilation error: {0}")]
-    Regex(String),
-    #[error("Configuration error: {0}")]
-    Config(String),
-}
-
 /// Complete segmentation result for a text.
 #[derive(Debug)]
 pub struct SegmentationResult {

@@ -146,7 +146,7 @@ pub fn sentences_from_tokens(word_texts: &[&str], params: &PunktParameters) -> V
 fn annotate_first_pass(tokens: &mut [PunktToken], params: &PunktParameters) {
     for token in tokens.iter_mut() {
         // Check for ellipsis: 2+ consecutive periods
-        if token.text.chars().all(|c| c == '.') && token.text.len() >= 2 {
+        if token.text.chars().all(|c| c == '.') && token.text.chars().count() >= 2 {
             token.ellipsis = true;
             continue;
         }
@@ -192,7 +192,7 @@ fn annotate_second_pass(tokens: &mut [PunktToken], params: &PunktParameters) {
         let tok1_type = tokens[i].type_no_period().to_string();
         let tok2_type = tokens[i + 1].type_no_sentperiod();
         let tok2_first_upper = tokens[i + 1].first_upper;
-        let tok2_first_lower = tokens[i + 1].first_lower;
+        let _tok2_first_lower = tokens[i + 1].first_lower;
         let tok1_is_initial = tokens[i].is_initial;
         let tok1_sentbreak = tokens[i].sentbreak;
 
@@ -219,13 +219,6 @@ fn annotate_second_pass(tokens: &mut [PunktToken], params: &PunktParameters) {
                 tokens[i].abbr = true;
                 continue;
             }
-        }
-
-        // If tok1 has sentbreak and tok2 starts lowercase, check sent_starters
-        if tok1_sentbreak && tok2_first_lower {
-            // If tok2 is not a known sentence starter, maybe undo the break
-            // Actually in NLTK, lowercase after period usually keeps the sentbreak
-            // unless there's specific evidence to undo it
         }
 
         // Sentence-starter heuristic:

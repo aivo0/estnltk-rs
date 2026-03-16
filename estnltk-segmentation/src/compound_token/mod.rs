@@ -58,6 +58,19 @@ impl Default for CompoundTokenConfig {
     }
 }
 
+/// State for the hyphenation detection state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HyphenState {
+    /// No hyphenation pattern in progress
+    None,
+    /// Just saw a hyphen adjacent to previous token
+    Hyphen,
+    /// Saw word after hyphen
+    Second,
+    /// Pattern ended, needs to be checked
+    End,
+}
+
 /// The compound token tagger.
 pub struct CompoundTokenTagger {
     level1_patterns: Vec<CompoundTokenPattern>,
@@ -65,6 +78,12 @@ pub struct CompoundTokenTagger {
     config: CompoundTokenConfig,
     letter_re: Regex,
     only_hyphens_re: Regex,
+    // Pre-compiled normalization regexes
+    month_year_re: Regex,
+    day_month_re: Regex,
+    compact_period_re1: Regex,
+    compact_period_re2: Regex,
+    collapse_ws_re: Regex,
 }
 
 impl CompoundTokenTagger {
@@ -90,12 +109,23 @@ impl CompoundTokenTagger {
         )).unwrap();
         let only_hyphens_re = Regex::new(r"^(-{2,})$").unwrap();
 
+        let month_year_re = Regex::new(r"^([012][0-9]|1[012])\.(1[7-9]\d\d|2[0-2]\d\d)$").unwrap();
+        let day_month_re = Regex::new(r"^(3[01]|[12][0-9]|0?[0-9])\.([012][0-9]|1[012])$").unwrap();
+        let compact_period_re1 = Regex::new(r"\.\s").unwrap();
+        let compact_period_re2 = Regex::new(r"\s\.").unwrap();
+        let collapse_ws_re = Regex::new(r"\s{2,}").unwrap();
+
         CompoundTokenTagger {
             level1_patterns,
             level2_patterns,
             config,
             letter_re,
             only_hyphens_re,
+            month_year_re,
+            day_month_re,
+            compact_period_re1,
+            compact_period_re2,
+            collapse_ws_re,
         }
     }
 
@@ -234,7 +264,7 @@ impl CompoundTokenTagger {
                 .filter(|t| t.start >= span.start && t.end <= span.end)
                 .copied()
                 .collect();
-            if covered.len() < 1 {
+            if covered.is_empty() {
                 continue;
             }
             // Verify end alignment
@@ -260,7 +290,7 @@ impl CompoundTokenTagger {
                 }
                 continue;
             }
-            if covered.len() >= 2 || (covered.len() == 1 && pattern_type.starts_with("negative:")) {
+            if covered.len() >= 2 {
                 result.push(CompoundToken {
                     span: MatchSpan::new(first_token_start, last_token_end),
                     token_spans: covered,
@@ -286,38 +316,38 @@ impl CompoundTokenTagger {
         }
 
         let mut hyphenation_start = 0;
-        let mut state: Option<&str> = Option::None;
+        let mut state = HyphenState::None;
         let mut last_end = 0;
 
         for (i, &token) in tokens.iter().enumerate() {
             let token_text = &text[c2b[token.start]..c2b[token.end]];
 
             match state {
-                Option::None => {
+                HyphenState::None => {
                     if last_end == token.start && token_text == "-" {
-                        state = Some("-");
+                        state = HyphenState::Hyphen;
                     } else {
                         hyphenation_start = i;
                     }
                 }
-                Some("-") => {
+                HyphenState::Hyphen => {
                     if last_end == token.start {
-                        state = Some("second");
+                        state = HyphenState::Second;
                     } else {
-                        state = Some("end");
+                        state = HyphenState::End;
                     }
                 }
-                Some("second") => {
+                HyphenState::Second => {
                     if last_end == token.start && token_text == "-" {
-                        state = Some("-");
+                        state = HyphenState::Hyphen;
                     } else {
-                        state = Some("end");
+                        state = HyphenState::End;
                     }
                 }
-                _ => {}
+                HyphenState::End => {}
             }
 
-            if state == Some("end") && hyphenation_start + 1 < i {
+            if state == HyphenState::End && hyphenation_start + 1 < i {
                 let hyp_start = tokens[hyphenation_start].start;
                 let hyp_end = tokens[i - 1].end;
                 let snippet = &text[c2b[hyp_start]..c2b[hyp_end]];
@@ -333,7 +363,7 @@ impl CompoundTokenTagger {
                         normalized,
                     });
                 }
-                state = Option::None;
+                state = HyphenState::None;
                 hyphenation_start = i;
             }
 
@@ -521,7 +551,7 @@ impl CompoundTokenTagger {
     ) -> Option<String> {
         let full_match = &text[byte_start..byte_end];
         match action {
-            NormalizationAction::None => Option::None,
+            NormalizationAction::None => None,
             NormalizationAction::StripWhitespace => {
                 let result: String = full_match.chars().filter(|c| !c.is_whitespace()).collect();
                 Some(result)
@@ -534,12 +564,10 @@ impl CompoundTokenTagger {
                         return Some(result);
                     }
                 }
-                Option::None
+                None
             }
             NormalizationAction::NumericWithPeriodNormalizer => {
-                let month_year = Regex::new(r"^([012][0-9]|1[012])\.(1[7-9]\d\d|2[0-2]\d\d)$").unwrap();
-                let day_month = Regex::new(r"^(3[01]|[12][0-9]|0?[0-9])\.([012][0-9]|1[012])$").unwrap();
-                if month_year.is_match(full_match) || day_month.is_match(full_match) {
+                if self.month_year_re.is_match(full_match) || self.day_month_re.is_match(full_match) {
                     Some(full_match.to_string())
                 } else {
                     let result: String = full_match.chars().filter(|&c| c != '.').collect();
@@ -553,15 +581,12 @@ impl CompoundTokenTagger {
             }
             NormalizationAction::CompactPeriods => {
                 // Remove spaces around periods: "a . b" -> "a.b"
-                let re1 = Regex::new(r"\.\s").unwrap();
-                let re2 = Regex::new(r"\s\.").unwrap();
-                let result = re1.replace_all(full_match, ".").to_string();
-                let result = re2.replace_all(&result, ".").to_string();
+                let result = self.compact_period_re1.replace_all(full_match, ".").to_string();
+                let result = self.compact_period_re2.replace_all(&result, ".").to_string();
                 Some(result)
             }
             NormalizationAction::CollapseWhitespace => {
-                let re = Regex::new(r"\s{2,}").unwrap();
-                let result = re.replace_all(full_match, " ").to_string();
+                let result = self.collapse_ws_re.replace_all(full_match, " ").to_string();
                 Some(result)
             }
         }
@@ -577,7 +602,7 @@ impl CompoundTokenTagger {
     fn normalize_word_with_hyphens(&self, _word_text: &str) -> Option<String> {
         // The Python code calls MorphAnalyzedToken for normalization.
         // For now, return None (the ignored_words_with_hyphens.csv is empty anyway).
-        Option::None
+        None
     }
 }
 
