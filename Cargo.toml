@@ -5,6 +5,7 @@ members = [
     "estnltk-csv",
     "estnltk-taggers",
     "estnltk-morph",
+    "estnltk-grammar",
     "estnltk-python",
     "vabamorf-sys",
     "vabamorf-rs",
@@ -21,3 +22,4 @@ aho-corasick = "1"
 csv = "1"
 pyo3 = { version = "0.22", features = ["extension-module"] }
 tempfile = "3"
+smallvec = { version = "1", features = ["union"] }

@@ -1,0 +1,9 @@
+[package]
+name = "estnltk-grammar"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+estnltk-core = { path = "../estnltk-core" }
+thiserror.workspace = true
+smallvec.workspace = true
