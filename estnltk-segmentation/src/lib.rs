@@ -127,38 +127,40 @@ mod tests {
     #[test]
     fn test_full_pipeline() {
         let pipeline = SegmentationPipeline::estonian();
-        let result = pipeline.segment("Tere maailm. Kuidas läheb?");
-        assert!(!result.tokens.is_empty());
-        assert!(!result.words.is_empty());
-        assert!(!result.sentences.is_empty());
+        let result = pipeline.segment("Tere maailm. Kuidas l\u{00E4}heb?");
+        assert_eq!(result.tokens.len(), 6);
+        assert_eq!(result.words.len(), 6);
+        assert_eq!(result.sentences.len(), 2);
+        assert_eq!(result.paragraphs.len(), 1);
     }
 
     #[test]
     fn test_estonian_text() {
         let pipeline = SegmentationPipeline::estonian();
-        let text = "Eesti Vabariik on riik Põhja-Euroopas. Pealinn on Tallinn.";
+        let text = "Eesti Vabariik on riik P\u{00F5}hja-Euroopas. Pealinn on Tallinn.";
         let result = pipeline.segment(text);
-        assert!(!result.tokens.is_empty());
-        assert!(result.sentences.len() >= 2, "Expected at least 2 sentences");
+        assert_eq!(result.words.len(), 10);
+        assert_eq!(result.sentences.len(), 2);
     }
 
     #[test]
     fn test_paragraph_detection() {
         let pipeline = SegmentationPipeline::estonian();
-        let text = "Esimene lause.\n\nTeine lõik.";
+        let text = "Esimene lause.\n\nTeine l\u{00F5}ik.";
         let result = pipeline.segment(text);
-        assert!(result.paragraphs.len() >= 2, "Expected 2 paragraphs, got {}", result.paragraphs.len());
+        assert_eq!(result.paragraphs.len(), 2);
     }
 
     #[test]
     fn test_compound_date() {
         let pipeline = SegmentationPipeline::estonian();
-        let text = "Kuupäev on 02.02.2010 ja see on hea.";
+        let text = "Kuup\u{00E4}ev on 02.02.2010 ja see on hea.";
         let result = pipeline.segment(text);
-        let has_date = result.compound_tokens.iter().any(|ct| {
-            ct.pattern_type.iter().any(|t| t == "numeric_date")
-        });
-        assert!(has_date, "Expected a numeric_date compound token");
+        assert_eq!(result.compound_tokens.len(), 1);
+        let ct = &result.compound_tokens[0];
+        assert!(ct.pattern_type.iter().any(|t| t == "numeric_date"));
+        assert_eq!(result.words.len(), 8);
+        assert_eq!(result.sentences.len(), 1);
     }
 
     #[test]

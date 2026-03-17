@@ -632,12 +632,14 @@ mod tests {
     #[test]
     fn test_detect_date() {
         let tagger = CompoundTokenTagger::estonian();
-        let text = "Kuupäev on 02.02.2010 ja rohkem pole";
+        let text = "Kuup\u{00E4}ev on 02.02.2010 ja rohkem pole";
         let token_tagger = crate::tokens_tagger::TokensTagger::new();
         let tokens = token_tagger.tokenize(text);
         let compounds = tagger.detect(text, &tokens);
-        let date_ct = compounds.iter().find(|ct| ct.pattern_type.contains(&"numeric_date".to_string()));
-        assert!(date_ct.is_some(), "Expected to find a numeric_date compound token");
+        assert_eq!(compounds.len(), 1);
+        let ct = &compounds[0];
+        assert!(ct.pattern_type.contains(&"numeric_date".to_string()));
+        assert_eq!(ct.token_spans.len(), 5); // "02", ".", "02", ".", "2010"
     }
 
     #[test]
@@ -647,7 +649,9 @@ mod tests {
         let token_tagger = crate::tokens_tagger::TokensTagger::new();
         let tokens = token_tagger.tokenize(text);
         let compounds = tagger.detect(text, &tokens);
-        let hyp = compounds.iter().find(|ct| ct.pattern_type.contains(&"hyphenation".to_string()));
-        assert!(hyp.is_some(), "Expected to find a hyphenation compound token");
+        assert_eq!(compounds.len(), 1);
+        let ct = &compounds[0];
+        assert!(ct.pattern_type.contains(&"hyphenation".to_string()));
+        assert_eq!(ct.token_spans.len(), 3); // "Vana", "-", "Tallinn"
     }
 }

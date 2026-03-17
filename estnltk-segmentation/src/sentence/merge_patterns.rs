@@ -362,7 +362,7 @@ mod tests {
     #[test]
     fn test_build_merge_patterns() {
         let patterns = build_merge_patterns();
-        assert!(patterns.len() >= 25, "Expected 25+ merge patterns, got {}", patterns.len());
+        assert_eq!(patterns.len(), 36);
     }
 
     #[test]

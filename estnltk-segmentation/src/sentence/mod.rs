@@ -182,7 +182,6 @@ mod tests {
     fn test_basic_sentence_split() {
         let tokenizer = SentenceTokenizer::estonian();
         let text = "Tere maailm. Kuidas l\u{00E4}heb?";
-        // Use the actual tokenizer to get correct spans
         let token_tagger = crate::tokens_tagger::TokensTagger::new();
         let tokens = token_tagger.tokenize(text);
         let words: Vec<Word> = tokens.iter().map(|&span| Word {
@@ -190,6 +189,6 @@ mod tests {
             normalized_form: None,
         }).collect();
         let sentences = tokenizer.split_sentences(text, &words, &[]);
-        assert!(sentences.len() >= 1, "Expected at least 1 sentence");
+        assert_eq!(sentences.len(), 2, "Expected 2 sentences");
     }
 }
